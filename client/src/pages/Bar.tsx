@@ -111,31 +111,44 @@ export default function Bar() {
   
   // Render a badge for the order status
   const renderStatusBadge = (status: string) => {
-    const variant = 
-      status === 'NEW' ? 'destructive' : 
-      status === 'COOKING' ? 'default' :
-      status === 'PLATING' ? 'warning' : 
-      status === 'READY' ? 'success' : 'outline';
+    let className = 'ticket-status ';
+    
+    switch(status) {
+      case 'NEW':
+        className += 'status-new';
+        break;
+      case 'COOKING':
+        className += 'status-cooking';
+        break;
+      case 'PLATING':
+        className += 'status-plating';
+        break;
+      case 'READY':
+        className += 'status-ready';
+        break;
+      default:
+        className += 'status-picked-up';
+    }
     
     return (
-      <Badge variant={variant}>{status}</Badge>
+      <span className={className}>{status}</span>
     );
   };
 
   return (
     <div className="container mx-auto py-8">
-      <div className="flex justify-between items-center mb-8">
+      <div className="station-header">
         <div>
-          <h1 className="mb-2">Bar Display</h1>
-          <p className="text-muted-foreground">Station view for bartenders</p>
+          <h1 className="station-title">Bar Station</h1>
+          <p className="station-description">Drink orders preparation and management</p>
         </div>
-        <div className="flex space-x-2">
+        <div className="station-controls">
           {[1, 2, 3].map(f => (
             <Button
               key={f}
               variant={floor === f ? 'default' : 'outline'}
               onClick={() => setFloor(f)}
-              className="px-6"
+              className="floor-button"
             >
               Floor {f}
             </Button>
@@ -144,13 +157,19 @@ export default function Bar() {
       </div>
       
       {barOrders.length === 0 ? (
-        <div className="text-center py-24 bg-muted/30 rounded-lg border border-dashed">
-          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto mb-4 text-muted-foreground"><path d="M8 22h8"></path><path d="M7 10h10"></path><path d="M10 14h4"></path><rect width="16" height="6" x="4" y="4" rx="2"></rect><path d="M4 10v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"></path></svg>
+        <div className="station-empty-state">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto mb-4 text-muted-foreground">
+            <path d="M8 22h8"></path>
+            <path d="M7 10h10"></path>
+            <path d="M10 14h4"></path>
+            <rect width="16" height="6" x="4" y="4" rx="2"></rect>
+            <path d="M4 10v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"></path>
+          </svg>
           <h2 className="text-2xl text-muted-foreground font-medium">No Active Orders</h2>
           <p className="text-muted-foreground mt-1">New drink orders will appear here</p>
         </div>
       ) : (
-        <div className="grid-layout">
+        <div className="ticket-grid">
           {barOrders.map(order => {
             const timeLeft = getTimeLeft(order);
             const timerStatus = getTimerStatus(timeLeft, 300); // 5 min baseline for drinks
@@ -166,36 +185,36 @@ export default function Bar() {
                 onClick={() => handleStatusUpdate(order.id, order.status || 'NEW')}
               >
                 <div className="p-6">
-                  <div className="flex justify-between items-start mb-3">
+                  <div className="ticket-header">
                     <div>
-                      <h3 className="text-lg font-bold">{formatLocation(order.floor, order.bay)}</h3>
-                      <div className="mt-1">{renderStatusBadge(order.status || 'NEW')}</div>
+                      <h3 className="text-xl font-bold">{formatLocation(order.floor, order.bay)}</h3>
+                      <div className="mt-2">{renderStatusBadge(order.status || 'NEW')}</div>
                     </div>
-                    <div className={`
-                      text-xl font-mono font-bold
+                    <div className={`ticket-timer
                       ${timerStatus === 'danger' ? 'timer-danger' : 
                         timerStatus === 'warning' ? 'timer-warning' : 
                         'text-blue-500'}
+                      ${timerStatus === 'danger' ? 'pulse' : ''}
                     `}>
                       {formatTimer(timeLeft)}
                     </div>
                   </div>
                   
                   <div className="mt-4">
-                    <h4 className="text-sm font-semibold text-gray-500 mb-2">
+                    <h4 className="text-lg font-semibold mb-3">
                       {getTotalItems(order)} drinks
                     </h4>
-                    <ul className="space-y-2">
+                    <ul className="ticket-items">
                       {order.items.map((item, index) => (
-                        <li key={index} className="flex justify-between">
-                          <span>{item.qty}x {item.name}</span>
-                          <span className="text-gray-500">
-                            {item.modifiers && item.modifiers.length > 0 && (
-                              <span className="text-xs italic ml-2">
-                                {item.modifiers.map(m => m.name).join(', ')}
-                              </span>
-                            )}
-                          </span>
+                        <li key={index} className="ticket-item">
+                          <div className="flex justify-between">
+                            <span className="ticket-item-name">{item.qty}× {item.name}</span>
+                          </div>
+                          {item.modifiers && item.modifiers.length > 0 && (
+                            <span className="ticket-item-modifiers">
+                              {item.modifiers.map(m => m.name).join(', ')}
+                            </span>
+                          )}
                         </li>
                       ))}
                     </ul>
