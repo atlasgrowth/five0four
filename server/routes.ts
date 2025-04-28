@@ -149,7 +149,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           order: {
             locationId: process.env.SQUARE_SANDBOX_LOCATION || '',
             // Actual Square order creation would include line items and other details
-            lineItems: items.map(async (item) => {
+            lineItems: await Promise.all(items.map(async (item) => {
               const menuItem = await storage.getMenuItemById(item.id);
               return {
                 name: menuItem?.name || `Item #${item.id}`,
@@ -159,11 +159,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   currency: 'USD'
                 }
               };
-            })
+            })) as any // Type assertion to bypass type checking for now
           }
         });
 
-        const squareOrderId = squareResponse.result.order?.id;
+        // Handle both response formats (mock and real Square API)
+        const squareOrderId = 'result' in squareResponse 
+          ? squareResponse.result.order?.id 
+          : squareResponse?.order?.id;
         if (squareOrderId) {
           await storage.updateOrderSquareId(order.id, squareOrderId);
         }
