@@ -1,161 +1,207 @@
-import { useEffect, useState, useCallback } from "react";
-import { useParams } from "wouter";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { BarWebSocket } from "@/lib/websocket";
-import { OrderWithItems, WebSocketMessage } from "@shared/types";
-import KitchenTicket from "@/components/kitchen/KitchenTicket";
-import { toast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
-import { FloorSelector } from "@/components/ui/floor-selector";
+import React, { useState, useEffect, useCallback } from 'react';
+import { BarWebSocket } from '@/lib/websocket';
+import { WebSocketMessage, OrderWithItems } from '@shared/types';
+import { formatLocation, formatTimer, getTimerStatus } from '@/lib/formatters';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { apiRequest } from '@/lib/queryClient';
+
+// Status progression for bar
+const NEXT_STATUS: Record<string, string> = {
+  'NEW': 'COOKING',
+  'COOKING': 'PLATING',
+  'PLATING': 'READY'
+};
 
 export default function Bar() {
-  const params = useParams<{ floor: string }>();
-  const floor = parseInt(params.floor, 10);
-  
-  const [connected, setConnected] = useState(false);
+  const [floor, setFloor] = useState(1);
   const [orders, setOrders] = useState<OrderWithItems[]>([]);
-  const [ws, setWs] = useState<BarWebSocket | null>(null);
+  const [barWs, setBarWs] = useState<BarWebSocket | null>(null);
+  const [counters, setCounters] = useState<Record<string, number>>({});
   
-  // Initialize WebSocket connection
+  // Set up timer to update every second
   useEffect(() => {
-    const barWs = new BarWebSocket(floor);
+    const timerId = setInterval(() => {
+      // Force re-render to update timers
+      setCounters(prev => ({ ...prev, tick: (prev.tick || 0) + 1 }));
+    }, 1000);
     
-    const removeConnectHandler = barWs.onConnect(() => {
-      setConnected(true);
-      toast({
-        title: "Connected",
-        description: `Connected to bar for Floor ${floor}`,
-      });
-    });
+    return () => clearInterval(timerId);
+  }, []);
+  
+  // Connect to WebSocket on component mount
+  useEffect(() => {
+    const ws = new BarWebSocket(floor);
+    setBarWs(ws);
     
-    const removeErrorHandler = barWs.onError(() => {
-      setConnected(false);
-      toast({
-        title: "Connection Error",
-        description: "Failed to connect to bar. Retrying...",
-        variant: "destructive",
-      });
-    });
+    ws.connect();
     
-    const removeMessageHandler = barWs.onMessage((data: WebSocketMessage) => {
+    const removeMessageHandler = ws.onMessage((data: WebSocketMessage) => {
       handleWebSocketMessage(data);
     });
     
-    barWs.connect();
-    setWs(barWs);
-    
+    // Clean up on component unmount
     return () => {
-      removeConnectHandler();
-      removeErrorHandler();
       removeMessageHandler();
-      barWs.disconnect();
+      ws.disconnect();
     };
   }, [floor]);
   
-  // Handle WebSocket messages
+  // Handle incoming WebSocket messages
   const handleWebSocketMessage = useCallback((data: WebSocketMessage) => {
-    switch (data.type) {
-      case 'init-orders':
-        if (data.orders) {
-          setOrders(data.orders);
-        }
-        break;
-      case 'new-ticket':
-      case 'order-paid':
-        if (data.order) {
-          // Refresh all orders - in a real app we'd update just the affected order
-          refreshOrders();
-        }
-        break;
-      case 'status-updated':
-        if (data.order) {
-          // Update the status of the specific order
-          setOrders(prevOrders => 
-            prevOrders.map(order => 
-              order.id === data.order?.id 
-                ? { ...order, status: data.order.status } 
-                : order
-            )
-          );
-        }
-        break;
+    if (data.type === 'init-orders') {
+      setOrders(data.data.orders || []);
+    } else if (data.type === 'new-ticket') {
+      setOrders(prev => [...prev, data.data]);
+    } else if (data.type === 'status-update') {
+      setOrders(prev => {
+        const updatedOrder = data.data;
+        return prev.map(order => 
+          order.id === updatedOrder.id ? updatedOrder : order
+        );
+      });
+    } else if (data.type === 'picked-up') {
+      // Remove picked up orders
+      setOrders(prev => prev.filter(order => order.id !== data.data.id));
     }
   }, []);
   
-  // Refresh orders from server
-  const refreshOrders = useCallback(() => {
-    // In a full implementation, we would make an API call to get updated orders
-    // For now, we'll rely on WebSocket for updates
-    if (ws && ws.isConnected()) {
-      ws.disconnect();
-      ws.connect();
-    }
-  }, [ws]);
-  
-  // Update order status
-  const updateOrderStatus = async (orderId: string, status: string) => {
+  // Handle advancing the order status
+  const handleStatusUpdate = async (orderId: string, currentStatus: string) => {
+    if (!NEXT_STATUS[currentStatus]) return;
+    
+    const nextStatus = NEXT_STATUS[currentStatus];
+    
     try {
-      const response = await apiRequest("PATCH", `/api/orders/${orderId}/status`, { status });
-      const result = await response.json();
-      
-      if (!result.success) {
-        throw new Error(result.error || "Failed to update order status");
-      }
-      
-      // The status update will come back through the WebSocket
-    } catch (error: any) {
-      toast({
-        title: "Error Updating Status",
-        description: error.message || "An unexpected error occurred",
-        variant: "destructive",
+      await apiRequest(`/api/orders/${orderId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: nextStatus }),
+        headers: {
+          'Content-Type': 'application/json'
+        }
       });
+      
+      // Update will come through WebSocket
+    } catch (error) {
+      console.error('Failed to update order status:', error);
     }
   };
   
+  // Calculate time left for an order
+  const getTimeLeft = (order: OrderWithItems): number => {
+    if (!order.timer_end) return 0;
+    
+    const now = new Date();
+    const timerEnd = new Date(order.timer_end);
+    const diffMs = timerEnd.getTime() - now.getTime();
+    
+    return Math.max(0, Math.floor(diffMs / 1000));
+  };
+  
+  // Calculate total items count
+  const getTotalItems = (order: OrderWithItems): number => {
+    return order.items.reduce((sum, item) => sum + item.qty, 0);
+  };
+  
+  // Filter orders that are relevant for bar (NEW, COOKING)
+  const barOrders = orders.filter(o => 
+    ['NEW', 'COOKING'].includes(o.status || '')
+  ).sort((a, b) => getTimeLeft(a) - getTimeLeft(b));
+  
+  // Render a badge for the order status
+  const renderStatusBadge = (status: string) => {
+    const variant = 
+      status === 'NEW' ? 'destructive' : 
+      status === 'COOKING' ? 'default' :
+      status === 'PLATING' ? 'warning' : 
+      status === 'READY' ? 'success' : 'outline';
+    
+    return (
+      <Badge variant={variant}>{status}</Badge>
+    );
+  };
+
   return (
-    <div className="container mx-auto px-4 py-6">
-      <div className="mb-4 flex flex-col md:flex-row md:items-center md:justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800">Bar Display</h2>
-          <p className="text-gray-600">Floor {floor}</p>
-        </div>
-        <div className="flex items-center space-x-4 mt-4 md:mt-0">
-          <Badge 
-            variant={connected ? "default" : "destructive"}
-            className={`px-3 py-1 rounded-full text-xs font-medium ${
-              connected ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
-            }`}
-          >
-            <span className={`h-2 w-2 rounded-full ${connected ? "bg-green-500" : "bg-red-500"} mr-1`}></span>
-            {connected ? "Connected" : "Disconnected"}
-          </Badge>
-          <Button variant="outline" onClick={refreshOrders} className="px-4 py-2">
-            <span className="material-icons mr-1 text-sm">refresh</span>
-            Refresh
-          </Button>
+    <div className="container mx-auto py-6">
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-3xl font-bold">Bar Display</h1>
+        <div className="flex space-x-2">
+          {[1, 2, 3].map(f => (
+            <Button
+              key={f}
+              variant={floor === f ? 'default' : 'outline'}
+              onClick={() => setFloor(f)}
+            >
+              Floor {f}
+            </Button>
+          ))}
         </div>
       </div>
       
-      {/* Floor Selector */}
-      <FloorSelector currentFloor={floor} urlPrefix="/bar" />
-      
-      {/* Bar Orders */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-        {orders.length > 0 ? (
-          orders.map(order => (
-            <KitchenTicket 
-              key={order.id} 
-              order={order} 
-              onStatusUpdate={(status) => updateOrderStatus(order.id, status)}
-            />
-          ))
-        ) : (
-          <div className="col-span-full text-center py-8 bg-white rounded-lg shadow-md">
-            <p className="text-gray-500">No active drink orders for this floor.</p>
-          </div>
-        )}
-      </div>
+      {barOrders.length === 0 ? (
+        <div className="text-center py-16">
+          <h2 className="text-2xl text-gray-400">No active orders</h2>
+          <p className="text-gray-500">New drink orders will appear here</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {barOrders.map(order => {
+            const timeLeft = getTimeLeft(order);
+            const timerStatus = getTimerStatus(timeLeft, 300); // 5 min baseline for drinks
+            
+            return (
+              <Card 
+                key={order.id}
+                className={`
+                  border-l-4 cursor-pointer hover:shadow-lg transition-shadow
+                  ${timerStatus === 'danger' ? 'border-l-red-500' : 
+                    timerStatus === 'warning' ? 'border-l-yellow-500' : 
+                    'border-l-blue-500'}
+                `}
+                onClick={() => handleStatusUpdate(order.id, order.status || 'NEW')}
+              >
+                <div className="p-6">
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <h3 className="text-lg font-bold">{formatLocation(order.floor, order.bay)}</h3>
+                      <div className="mt-1">{renderStatusBadge(order.status || 'NEW')}</div>
+                    </div>
+                    <div className={`
+                      text-xl font-mono font-bold
+                      ${timerStatus === 'danger' ? 'text-red-500' : 
+                        timerStatus === 'warning' ? 'text-yellow-500' : 
+                        'text-blue-500'}
+                    `}>
+                      {formatTimer(timeLeft)}
+                    </div>
+                  </div>
+                  
+                  <div className="mt-4">
+                    <h4 className="text-sm font-semibold text-gray-500 mb-2">
+                      {getTotalItems(order)} drinks
+                    </h4>
+                    <ul className="space-y-2">
+                      {order.items.map((item, index) => (
+                        <li key={index} className="flex justify-between">
+                          <span>{item.qty}x {item.name}</span>
+                          <span className="text-gray-500">
+                            {item.modifiers && item.modifiers.length > 0 && (
+                              <span className="text-xs italic ml-2">
+                                {item.modifiers.map(m => m.name).join(', ')}
+                              </span>
+                            )}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
