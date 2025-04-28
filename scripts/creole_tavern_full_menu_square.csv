@@ -1,0 +1,26 @@
+id,name,price,category
+SQI1,Buffalo Wings,$12.99,Appetizers
+SQI2,Cheese Quesadilla,$8.99,Appetizers
+SQI3,Loaded Nachos,$10.49,Appetizers
+SQI4,Mozzarella Sticks,$7.99,Appetizers
+SQI5,Spinach Artichoke Dip,$9.99,Appetizers
+SQI6,Cheeseburger,$13.99,Entrees
+SQI7,Club Sandwich,$11.99,Entrees
+SQI8,Chicken Tenders,$10.99,Entrees
+SQI9,Fish & Chips,$14.99,Entrees
+SQI10,Grilled Chicken Sandwich,$12.99,Entrees
+SQI11,Steak Fajitas,$16.99,Entrees
+SQI12,Veggie Wrap,$9.99,Entrees
+SQI13,French Fries,$4.99,Sides
+SQI14,Onion Rings,$5.99,Sides
+SQI15,Coleslaw,$3.99,Sides
+SQI16,Side Salad,$4.99,Sides
+SQI17,Chocolate Chip Cookie,$2.99,Desserts
+SQI18,Brownie Sundae,$6.99,Desserts
+SQI19,NY Cheesecake,$5.99,Desserts
+SQI20,Soda,$2.99,Drinks
+SQI21,Iced Tea,$2.99,Drinks
+SQI22,Bottled Water,$1.99,Drinks
+SQI23,Draft Beer,$5.99,Drinks
+SQI24,Wine (Glass),$7.99,Drinks
+SQI25,Milkshake,$4.99,Drinks
