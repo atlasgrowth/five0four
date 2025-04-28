@@ -10,7 +10,7 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "pull:catalog": "node scripts/pullCatalog.js",
-      "seed:menu":    "tsx scripts/seedMenuFromJson.ts",
+      "seed:menu":    "tsx scripts/seedMenu.ts",
     "sync:catalog": "tsx server/jobs/syncSquareCatalog.ts"
   },
   "dependencies": {
