@@ -9,6 +9,7 @@ export default function Header() {
   const navItems = [
     { name: 'Server Pad', path: '/' },
     { name: 'Menu', path: '/menu' },
+    { name: 'New Order', path: '/new-order' },
     { name: 'Kitchen', path: '/kitchen' },
     { name: 'Bar', path: '/bar' }
   ];
