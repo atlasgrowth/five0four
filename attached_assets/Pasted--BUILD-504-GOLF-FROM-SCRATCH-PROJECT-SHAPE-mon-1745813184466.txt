@@ -1,0 +1,127 @@
+🚀  BUILD 504-GOLF FROM SCRATCH
+==============================
+
+PROJECT SHAPE
+-------------
+monorepo/
+  ├─ client/            # React + Vite + Tailwind
+  ├─ server/            # Express + TypeScript + Drizzle + PostgreSQL
+  ├─ shared/            # Zod types for MenuItem, Order
+  ├─ scripts/           # one-off utilities (CSV seed, etc.)
+  └─ .env.example       # env-var template
+
+DEPENDENCIES
+------------
+npm add -W react react-dom react-router-dom zustand
+npm add -W -D vite tailwindcss postcss autoprefixer
+npm add -w server express ws cors drizzle-orm pg
+npm add -w server csv-parse
+npm add -w server square@42.1.0
+npm add -w shared zod
+npm add -D -W typescript tsx @types/express @types/ws
+
+ENV-VARS (.env.example)
+-----------------------
+SQUARE_ENV=sandbox
+SQUARE_SANDBOX_TOKEN=
+SQUARE_SANDBOX_LOCATION=
+SQUARE_WEBHOOK_SECRET=
+PORT=5000
+DATABASE_URL=postgres://replit:replit@localhost:5432/504golf
+
+DB SCHEMA (shared/schema.ts)
+----------------------------
+export const menu_items = pgTable("menu_items", {
+  id: serial("id").primaryKey(),
+  square_id: text("square_id").unique().notNull(),
+  name: text("name").notNull(),
+  price_cents: integer("price_cents").notNull(),
+  category: text("category").notNull(),
+  cook_seconds: integer("cook_seconds").notNull(),
+  active: boolean("active").default(true)
+});
+
+export const orders = pgTable("orders", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  Square_order_id: text("square_order_id"),
+  floor: integer("floor").notNull(),
+  bay: integer("bay").notNull(),
+  status: text("status").default("OPEN")
+});
+
+export const order_items = pgTable("order_items", {
+  order_id: uuid("order_id").references(() => orders.id),
+  menu_item_id: integer("menu_item_id").references(() => menu_items.id),
+  qty: integer("qty").notNull()
+});
+
+SERVER ROUTES
+-------------
+* GET /api/menu         → returns all active menu_items grouped by category
+* POST /api/orders      → body {floor,bay,items:[{id,qty}]}  
+                         • inserts order + items  
+                         • calls Square ordersApi.createOrder (stub first)  
+                         • broadcasts via WS “new-ticket”
+* POST /square/webhook  → verifies signature, sets orders.status = PAID
+
+WEBSOCKET HUB
+-------------
+ws://localhost:5000/ws/kitchen?floor=2  
+  broadcasts JSON tickets to `floor-<n>` room
+
+SQUARE WRAPPER (stub first)
+---------------------------
+import { Client, Environment } from "square";
+export const sq = new Client({
+  environment: Environment.Sandbox,
+  accessToken: process.env.SQUARE_SANDBOX_TOKEN!
+});
+export const catalogApi  = sq.catalogApi;
+export const ordersApi   = process.env.SQUARE_SANDBOX_TOKEN
+  ? sq.ordersApi
+  : { createOrder: async ({ order }) =>
+        ({ result: { order: { id:`MOCK_${Date.now()}` } } }) };
+
+SEED SCRIPT (scripts/seedMenu.ts)
+---------------------------------
+* reads scripts/creole_tavern_full_menu_square.csv  
+* inserts rows into menu_items with cook_seconds = 300  
+npm script: `"seed:menu": "tsx scripts/seedMenu.ts"`
+
+CLIENT PAGES
+------------
+/ (ServerPad):
+  • floor selector (1-3), bay selector (1-25)
+/menu:
+  • fetch /api/menu
+  • add items to cart
+  • SEND → POST /api/orders
+/kitchen/:floor
+  • WebSocket -> show tickets, timers yellow at 80%, red at ETA
+
+TIMING
+------
+ETA = max(cook_seconds) + 120 sec prep + 120 sec expo.
+
+TEST COMMANDS (after scaffold)
+------------------------------
+1) npm run seed:menu
+2) npm run dev  (concurrently starts client+server)
+3) Browser: http://localhost:5173   → create order
+4) curl -X POST http://localhost:5000/square/webhook \
+     -H 'x-square-signature: stub' \
+     -H 'Content-Type: application/json' \
+     -d '{"type":"payment.created","data":{"object":{"payment":{"order_id":"MOCK_123"}}}}'
+
+DONE-MESSAGE
+------------
+When scaffold complete, print:
+✅  scaffold ready – run `npm run seed:menu` then `npm run dev`
+
+GIT
+---
+After seed & first run:
+git init && git add . && git commit -m "Initial scaffold"
+gh repo create 504golf-restart --private --source=. --remote=origin
+git push -u origin main
+✅ DONE
