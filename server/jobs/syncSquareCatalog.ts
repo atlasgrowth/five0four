@@ -1,97 +1,52 @@
-
-import { log } from "../vite";
-import { storage } from "../storage";
-import { sq } from "../routes";
-import { eq } from "drizzle-orm";
-import { menu_items } from "../../shared/schema";
+import { catalogApi } from "../integrations/square";
 import { db } from "../db";
+import { menu_items } from "../../shared/schema";   // ← this path is correct
 
-async function syncCatalog() {
-  try {
-    log("Starting Square catalog sync...");
-    
-    // Get catalog from Square
-    const response = await sq.catalog.listCatalog(undefined, "ITEM");
-    
-    if (!response.result.objects) {
-      log("No catalog items found in Square");
-      return;
+
+export async function syncCatalog() {
+  console.log("Syncing Square catalog → Postgres …");
+  const resp = await catalogApi.listCatalog({
+    types: ["ITEM", "ITEM_VARIATION", "CATEGORY"],
+  });
+  const objs = resp.result.objects ?? [];
+
+  const categories = Object.fromEntries(
+    objs
+      .filter((o) => o.type === "CATEGORY")
+      .map((c) => [c.id, c.categoryData?.name ?? "Misc"])
+  );
+
+  const rows = objs
+    .filter((o) => o.type === "ITEM_VARIATION")
+    .map((v) => {
+      const itemObj = objs.find((o) => o.id === v.itemVariationData?.itemId);
+      const catName = categories[itemObj?.itemData?.categoryId] || "Misc";
+      return {
+        square_id: v.id,
+        name: v.itemVariationData?.name,
+        price_cents: v.itemVariationData?.priceMoney?.amount ?? 0,
+        category: catName,
+        station: catName === "Drinks" ? "Bar" : "Kitchen",
+        cook_seconds: 300,
+        active: true,
+      };
+    });
+
+  await db.transaction(async (tx) => {
+    for (const r of rows) {
+      await tx
+        .insert(menu_items)
+        .values(r)
+        .onConflictDoUpdate({ target: menu_items.square_id, set: r });
     }
-    
-    const catalogItems = response.result.objects;
-    log(`Found ${catalogItems.length} items in Square catalog`);
-    
-    // Process each catalog item
-    for (const item of catalogItems) {
-      if (!item.itemData) continue;
-      
-      const name = item.itemData.name;
-      if (!name) continue;
-      
-      // Find variations with price data
-      const variations = item.itemData.variations;
-      if (!variations || variations.length === 0) continue;
-      
-      // Use the first variation's price
-      const variation = variations[0];
-      if (!variation.itemVariationData || !variation.itemVariationData.priceMoney) continue;
-      
-      const price = variation.itemVariationData.priceMoney.amount || 0;
-      
-      // Determine category based on item data
-      let category = 'Other';
-      if (item.itemData.categoryId) {
-        // Get category name if available
-        // In a real scenario, you'd fetch categories too and map IDs to names
-        category = item.itemData.categoryId;
-      }
-      
-      // Check if menu item already exists
-      const existingItem = await db.select().from(menu_items).where(eq(menu_items.name, name)).limit(1);
-      
-      if (existingItem.length > 0) {
-        // Update existing item
-        await db.update(menu_items)
-          .set({ 
-            price_cents: price,
-            category: category,
-            description: item.itemData.description || '',
-            image_url: item.itemData.imageUrl || '',
-            active: true
-          })
-          .where(eq(menu_items.name, name));
-        
-        log(`Updated menu item: ${name}`);
-      } else {
-        // Create new item
-        await storage.createMenuItem({
-          name: name,
-          price_cents: price,
-          category: category,
-          description: item.itemData.description || '',
-          image_url: item.itemData.imageUrl || '',
-          station: determineStation(category),
-          active: true
-        });
-        
-        log(`Created new menu item: ${name}`);
-      }
-    }
-    
-    log("Square catalog sync completed successfully");
-  } catch (error) {
-    log(`Error syncing catalog: ${error instanceof Error ? error.message : String(error)}`, 'error');
-  }
+  });
+
+  console.log("Sync complete:", rows.length, "menu items");
 }
 
-// Helper function to determine station based on category
-function determineStation(category: string): 'Kitchen' | 'Bar' {
-  const barCategories = ['Drinks', 'Cocktails', 'Beer', 'Wine', 'Spirits'];
-  return barCategories.some(c => category.includes(c)) ? 'Bar' : 'Kitchen';
+if (import.meta.url.endsWith("syncSquareCatalog.ts")) {
+  syncCatalog().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
 }
-
-// Execute the sync
-syncCatalog().catch(error => {
-  log(`Fatal error in catalog sync: ${error instanceof Error ? error.message : String(error)}`, 'error');
-  process.exit(1);
-});
