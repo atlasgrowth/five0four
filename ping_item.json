@@ -1,0 +1,21 @@
+{
+  "idempotency_key": "ping-001",
+  "object": {
+    "type": "ITEM",
+    "id": "#PING_ITEM",
+    "item_data": {
+      "name": "Ping Shrimp (test)",
+      "variations": [
+        {
+          "type": "ITEM_VARIATION",
+          "id": "#PING_ITEM_VARIATION",
+          "item_variation_data": {
+            "item_id": "#PING_ITEM",
+            "name": "Regular",
+            "price_money": { "amount": 111, "currency": "USD" }
+          }
+        }
+      ]
+    }
+  }
+}
