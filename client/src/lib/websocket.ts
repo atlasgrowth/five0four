@@ -3,10 +3,12 @@ import { WebSocketMessage } from "@shared/types";
 type MessageHandler = (data: WebSocketMessage) => void;
 type ConnectHandler = () => void;
 type ErrorHandler = (event: Event) => void;
+type StationType = 'kitchen' | 'bar';
 
-export class KitchenWebSocket {
+export class StationWebSocket {
   private ws: WebSocket | null = null;
   private floor: number;
+  private station: StationType;
   private messageHandlers: MessageHandler[] = [];
   private connectHandlers: ConnectHandler[] = [];
   private errorHandlers: ErrorHandler[] = [];
@@ -15,8 +17,9 @@ export class KitchenWebSocket {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 2000; // ms
   
-  constructor(floor: number) {
+  constructor(floor: number, station: StationType) {
     this.floor = floor;
+    this.station = station;
   }
   
   public connect(): void {
@@ -25,12 +28,12 @@ export class KitchenWebSocket {
     }
     
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws/kitchen?floor=${this.floor}`;
+    const wsUrl = `${protocol}//${window.location.host}/ws/${this.station}?floor=${this.floor}`;
     
     this.ws = new WebSocket(wsUrl);
     
     this.ws.onopen = () => {
-      console.log(`Connected to WebSocket for floor ${this.floor}`);
+      console.log(`Connected to ${this.station} WebSocket for floor ${this.floor}`);
       this.reconnectAttempts = 0;
       this.connectHandlers.forEach(handler => handler());
     };
@@ -45,12 +48,12 @@ export class KitchenWebSocket {
     };
     
     this.ws.onerror = (event) => {
-      console.error('WebSocket error:', event);
+      console.error(`${this.station} WebSocket error:`, event);
       this.errorHandlers.forEach(handler => handler(event));
     };
     
     this.ws.onclose = () => {
-      console.log(`WebSocket closed for floor ${this.floor}`);
+      console.log(`${this.station} WebSocket closed for floor ${this.floor}`);
       
       // Attempt to reconnect if not max attempts
       if (this.reconnectAttempts < this.maxReconnectAttempts) {
@@ -97,5 +100,19 @@ export class KitchenWebSocket {
   
   public isConnected(): boolean {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+}
+
+// For backwards compatibility
+export class KitchenWebSocket extends StationWebSocket {
+  constructor(floor: number) {
+    super(floor, 'kitchen');
+  }
+}
+
+// Bar WebSocket client
+export class BarWebSocket extends StationWebSocket {
+  constructor(floor: number) {
+    super(floor, 'bar');
   }
 }

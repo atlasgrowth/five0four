@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { z } from "zod";
 import { storage } from "./storage";
-import { SquareClient, SquareEnvironment } from "square";
+import { SquareClient } from "square";
 import { log } from "./vite";
 
 // Square client setup
@@ -16,23 +16,47 @@ export const sq = new SquareClient({
 
 // Square API clients
 export const catalogApi = sq.catalog;
+
+// Mock Square Orders API for development/testing
+function createMockOrdersApi() {
+  return {
+    createOrder: async ({ order }: any) => ({ 
+      result: { order: { id: `MOCK_${Date.now()}` } } 
+    })
+  };
+}
+
+// Use real Square API if token is available, otherwise use mock
 export const ordersApi = process.env.SQUARE_SANDBOX_TOKEN
   ? sq.orders
-  : { create: async ({ order }: any) =>
-      ({ result: { order: { id: `MOCK_${Date.now()}` } } }) };
+  : createMockOrdersApi();
 
-// WebSocket connections by floor
+// WebSocket connections by floor and station
 interface FloorConnections {
-  [floor: string]: WebSocket[];
+  [key: string]: WebSocket[];
 }
 const floorConnections: FloorConnections = {};
 
 // Send message to all connections for a specific floor
 function broadcastToFloor(floor: number, data: any) {
-  const floorKey = `floor-${floor}`;
-  if (floorConnections[floorKey]) {
-    const message = JSON.stringify(data);
-    floorConnections[floorKey].forEach(client => {
+  // Broadcast to both kitchen and bar stations for this floor
+  const kitchenKey = `kitchen:${floor}`;
+  const barKey = `bar:${floor}`;
+  
+  const message = JSON.stringify(data);
+  
+  // Send to kitchen connections
+  if (floorConnections[kitchenKey]) {
+    floorConnections[kitchenKey].forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
+  }
+  
+  // Send to bar connections
+  if (floorConnections[barKey]) {
+    floorConnections[barKey].forEach(client => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(message);
       }
@@ -43,46 +67,64 @@ function broadcastToFloor(floor: number, data: any) {
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
-  // Initialize WebSocket server
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws/kitchen' });
+  // Initialize WebSocket server with path for both kitchen and bar
+  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
   wss.on('connection', (ws, req) => {
     const url = new URL(req.url || '', `http://${req.headers.host}`);
     const floor = url.searchParams.get('floor');
+    const isKitchen = url.pathname.includes('/kitchen');
+    const isBar = url.pathname.includes('/bar');
     
-    // Invalid connection without floor
-    if (!floor) {
+    // Invalid connection without floor or specific station
+    if (!floor || (!isKitchen && !isBar)) {
       ws.close();
       return;
     }
 
-    // Add to floor's connections
-    const floorKey = `floor-${floor}`;
-    if (!floorConnections[floorKey]) {
-      floorConnections[floorKey] = [];
+    // Determine connection key based on station and floor
+    const connectionKey = isKitchen ? `kitchen:${floor}` : `bar:${floor}`;
+    
+    // Add to connections map
+    if (!floorConnections[connectionKey]) {
+      floorConnections[connectionKey] = [];
     }
-    floorConnections[floorKey].push(ws);
+    floorConnections[connectionKey].push(ws);
 
-    log(`WebSocket client connected to ${floorKey}`);
+    log(`WebSocket client connected to ${connectionKey}`);
 
-    // Send initial orders for the floor
+    // Send initial orders for the floor, filtered by station
     storage.getOrdersByFloor(parseInt(floor, 10))
       .then(orders => {
+        // For kitchen, send only items with station='Kitchen'
+        // For bar, send only items with station='Bar'
+        const filteredOrders = orders.map(order => {
+          // Clone the order to avoid modifying the original
+          const filteredOrder = { ...order };
+          
+          // Filter items by station
+          filteredOrder.items = order.items.filter(item => 
+            isKitchen ? item.station === 'Kitchen' : item.station === 'Bar'
+          );
+          
+          return filteredOrder;
+        }).filter(order => order.items.length > 0); // Only include orders with relevant items
+        
         ws.send(JSON.stringify({
           type: 'init-orders',
-          orders
+          orders: filteredOrders
         }));
       })
       .catch(err => {
-        log(`Error fetching orders for ${floorKey}: ${err.message}`, 'error');
+        log(`Error fetching orders for ${connectionKey}: ${err.message}`, 'error');
       });
 
     ws.on('close', () => {
       // Remove from connections
-      if (floorConnections[floorKey]) {
-        floorConnections[floorKey] = floorConnections[floorKey].filter(client => client !== ws);
+      if (floorConnections[connectionKey]) {
+        floorConnections[connectionKey] = floorConnections[connectionKey].filter(client => client !== ws);
       }
-      log(`WebSocket client disconnected from ${floorKey}`);
+      log(`WebSocket client disconnected from ${connectionKey}`);
     });
   });
 
@@ -145,21 +187,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create order in Square (stubbed if no token)
       try {
-        const squareResponse = await ordersApi.create({
+        // Prepare line items for the order
+        const lineItems = await Promise.all(items.map(async (item) => {
+          const menuItem = await storage.getMenuItemById(item.id);
+          return {
+            name: menuItem?.name || `Item #${item.id}`,
+            quantity: `${item.qty}`,
+            basePriceMoney: {
+              amount: menuItem?.price_cents || 0,
+              currency: 'USD'
+            }
+          };
+        }));
+        
+        // Create order in Square
+        const squareResponse = await (ordersApi as any).createOrder({
           order: {
             locationId: process.env.SQUARE_SANDBOX_LOCATION || '',
-            // Actual Square order creation would include line items and other details
-            lineItems: await Promise.all(items.map(async (item) => {
-              const menuItem = await storage.getMenuItemById(item.id);
-              return {
-                name: menuItem?.name || `Item #${item.id}`,
-                quantity: `${item.qty}`,
-                basePriceMoney: {
-                  amount: menuItem?.price_cents || 0,
-                  currency: 'USD'
-                }
-              };
-            })) as any // Type assertion to bypass type checking for now
+            lineItems
           }
         });
 
