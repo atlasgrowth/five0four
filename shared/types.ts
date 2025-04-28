@@ -21,9 +21,15 @@ export interface CartItem {
   qty: number;
 }
 
+// Extended item type for order details
+export interface OrderItemWithModifiers extends OrderItem, MenuItem {
+  total_cook_seconds: number;
+  modifiers?: MenuModifier[];  
+}
+
 // Order with items
 export interface OrderWithItems extends Order {
-  items: (OrderItem & MenuItem & { total_cook_seconds: number })[];
+  items: OrderItemWithModifiers[];
 }
 
 // WebSocket message types

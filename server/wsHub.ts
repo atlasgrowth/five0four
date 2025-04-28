@@ -148,8 +148,8 @@ async function sendInitialState(ws: WebSocket, room: string) {
       
       // Filter based on room
       const filteredOrders = room === 'kitchen' 
-        ? orders.filter(o => ['NEW', 'COOKING'].includes(o.status))
-        : orders.filter(o => ['PLATING', 'READY'].includes(o.status));
+        ? orders.filter(o => o.status && ['NEW', 'COOKING'].includes(o.status))
+        : orders.filter(o => o.status && ['PLATING', 'READY'].includes(o.status));
       
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
