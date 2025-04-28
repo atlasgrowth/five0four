@@ -1,8 +1,13 @@
 import { parse } from 'csv-parse';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { db } from '../server/db';
 import { menu_items } from '../shared/schema';
+
+// Get the directory name in ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Set the default cook time in seconds
 const DEFAULT_COOK_SECONDS = 300; // 5 minutes
@@ -77,8 +82,8 @@ main()
     console.error(e);
     process.exit(1);
   })
-  .finally(async () => {
-    // Close DB connection and exit
-    await db.pool.end();
+  .finally(() => {
+    // Exit without trying to close the pool explicitly
+    // The pool is managed by the @neondatabase/serverless driver
     process.exit(0);
   });
