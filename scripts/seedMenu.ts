@@ -9,8 +9,25 @@ import { menu_items } from '../shared/schema';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Set the default cook time in seconds
-const DEFAULT_COOK_SECONDS = 300; // 5 minutes
+// Cook times in seconds by category
+const COOK_SECONDS_BY_CATEGORY = {
+  'Shareables': 420,
+  'Burgers': 600,
+  'Pizzas': 720,
+  'Handhelds': 480,
+  'Entrees': 900,
+  'Salads': 180,
+  'Soups': 180,
+  'Sides': 120,
+  'Kids': 420,
+  'Desserts': 180,
+  // Default values for other categories
+  'Breakfast': 480,
+  'Mains': 600,
+  'Starters': 420,
+  'Beverages': 60,
+  'default': 300
+};
 
 // Interface for CSV row
 interface MenuCSVRow {
@@ -18,6 +35,26 @@ interface MenuCSVRow {
   name: string;
   price: string; // Will need to be parsed to cents
   category: string;
+}
+
+function getCookTimeByCategory(category: string): number {
+  // Check for partial matches (e.g., "Salad" should match "Salads")
+  const normalizedCategory = category.toLowerCase();
+  
+  for (const [key, value] of Object.entries(COOK_SECONDS_BY_CATEGORY)) {
+    if (normalizedCategory.includes(key.toLowerCase()) || key.toLowerCase().includes(normalizedCategory)) {
+      return value;
+    }
+  }
+  
+  return COOK_SECONDS_BY_CATEGORY.default;
+}
+
+function getStationByCategory(category: string): string {
+  // Drinks/Beverages go to Bar, everything else to Kitchen
+  return category.toLowerCase().includes('beverage') || 
+         category.toLowerCase().includes('drink') ? 
+         'Bar' : 'Kitchen';
 }
 
 async function main() {
@@ -56,7 +93,8 @@ async function main() {
     // Convert price to cents (assuming format like $10.99)
     price_cents: parseInt((parseFloat(record.price.replace('$', '')) * 100).toFixed(0)),
     category: record.category,
-    cook_seconds: DEFAULT_COOK_SECONDS,
+    cook_seconds: getCookTimeByCategory(record.category),
+    station: getStationByCategory(record.category),
     active: true
   }));
   

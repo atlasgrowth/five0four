@@ -6,18 +6,19 @@ export const menu_items = pgTable("menu_items", {
   id: serial("id").primaryKey(),
   square_id: text("square_id").unique().notNull(),
   name: text("name").notNull(),
-  price_cents: integer("price_cents").notNull(),
   category: text("category").notNull(),
+  price_cents: integer("price_cents").notNull(),
   cook_seconds: integer("cook_seconds").notNull(),
+  station: text("station").default("Kitchen"),
   active: boolean("active").default(true)
 });
 
 export const orders = pgTable("orders", {
   id: uuid("id").defaultRandom().primaryKey(),
-  square_order_id: text("square_order_id"),
   floor: integer("floor").notNull(),
   bay: integer("bay").notNull(),
-  status: text("status").default("OPEN")
+  status: text("status").default("OPEN"),
+  square_order_id: text("square_order_id")
 });
 
 export const order_items = pgTable("order_items", {

@@ -1,0 +1,110 @@
+🔥  FULL SCAFFOLD – 504 GOLF PHASE 1 (MENU & TICKET RAIL)
+========================================================
+
+# Create monorepo
+root/
+ ├ client/  React + Vite + Tailwind + Zustand
+ ├ server/  Express + TS + Drizzle + PostgreSQL
+ ├ shared/  Zod types
+ ├ scripts/ seed & one-off utilities
+ └ .env.example
+
+# Install deps
+npm add -W react react-dom zustand react-router-dom
+npm add -w client @heroicons/react
+npm add -w server express ws cors drizzle-orm pg csv-parse
+npm add -w shared zod
+npm add -D -W typescript tsx vite tailwindcss postcss autoprefixer @types/ws @types/express
+
+# .env.example
+PORT=5000
+DATABASE_URL=postgres://replit:replit@localhost:5432/golf
+SQUARE_ENV=sandbox
+SQUARE_SANDBOX_TOKEN=
+SQUARE_SANDBOX_LOCATION=
+SQUARE_WEBHOOK_SECRET=
+
+# DB schema (shared/schema.ts)
+export const menu_items = pgTable("menu_items", {
+  id: serial("id").primaryKey(),
+  square_id: text("square_id").unique().notNull(),
+  name: text("name").notNull(),
+  category: text("category").notNull(),
+  price_cents: integer("price_cents").notNull(),
+  cook_seconds: integer("cook_seconds").notNull(),
+  station: text("station").default("Kitchen"),
+  active: boolean("active").default(true)
+});
+export const orders = pgTable("orders", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  floor: integer("floor").notNull(),
+  bay: integer("bay").notNull(),
+  status: text("status").default("OPEN"),
+  square_order_id: text("square_order_id")
+});
+export const order_items = pgTable("order_items", {
+  order_id: uuid("order_id").references(() => orders.id),
+  menu_item_id: integer("menu_item_id").references(() => menu_items.id),
+  qty: integer("qty").notNull()
+});
+
+# Seed script (scripts/seedMenu.ts)
+• read scripts/creole_tavern_full_menu_square.csv
+• map Category→station (Drinks→Bar else Kitchen)
+• insert into menu_items with cook_seconds defaults:
+    Shareables 420, Burgers 600, Pizzas 720, Handhelds 480,
+    Entrees 900, Salads/Soups 180, Sides 120, Kids 420, Desserts 180
+
+package.json "scripts":
+  "dev": "concurrently \"npm:dev:*\"",
+  "dev:client": "vite dev --port 5173 --host",
+  "dev:server": "tsx server/index.ts",
+  "seed:menu": "tsx scripts/seedMenu.ts"
+
+# Server routes
+GET /api/menu               -> select * from menu_items order by category,name
+POST /api/orders            -> body {floor,bay,items:[{id,qty}]}
+                               • inserts order+items
+                               • broadcasts via WS room `kitchen:<floor>` and `bar:<floor>`
+                               • returns {orderId}
+WS /ws/kitchen?floor=2      -> join room kitchen:2
+WS /ws/bar?floor=2          -> join room bar:2
+POST /square/webhook        -> placeholder (logs & 200 OK)
+
+# Square wrapper (Phase-1 stub)
+export const ordersApi = {
+  async createOrder({ order }) {
+    return { result: { order: { id: `MOCK_${Date.now()}` } } };
+  }
+};
+export const catalogApi = null;
+
+# Client pages
+/ (ServerPad):
+  • floor dropdown 1-3
+  • bay dropdown (101-126,201-226,301-326)
+/menu:
+  • fetch /api/menu
+  • category tabs
+  • add to cart
+  • SEND -> POST /api/orders -> nav to /kitchen
+/kitchen:
+  • connect WS kitchen?floor=X
+  • list tickets, timer (cook_seconds+240), yellow at 80%, red at 100%
+/bar:
+  • same WS but for bar station only
+
+# Testing script printed at finish:
+1) npm run seed:menu
+2) npm run dev
+3) Browser: Floor 1 Bay 105 -> add Nachos -> SEND
+   -> Kitchen screen shows ticket
+4) curl webhook to mark paid (docs in README)
+
+# README.md additions
+• Phase roadmap (2=Square Catalog, 3=Orders+Payment, 4=Cook-time ML, 5=QR Drinks)
+• How to switch stub → real Square SDK later.
+
+# Finish
+git init && git add . && git commit -m \"Scaffold Phase-1\"
+❗ Print:   ✅  scaffold ready – now run `npm run seed:menu` then `npm run dev`
