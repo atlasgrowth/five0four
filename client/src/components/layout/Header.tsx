@@ -36,7 +36,15 @@ export default function Header() {
             {navItems.map((item) => (
               <li key={item.name}>
                 <Link 
-                  href={item.path === '/menu' ? '#' : item.path === '/kitchen' ? '/kitchen/1' : item.path}
+                  href={
+                    item.path === '/menu' 
+                      ? '#' 
+                      : item.path === '/kitchen' 
+                        ? '/kitchen/1' 
+                        : item.path === '/bar'
+                          ? '/bar/1'
+                          : item.path
+                  }
                   className={cn(
                     "hover:underline cursor-pointer",
                     isActive(item.path) && "font-bold"
@@ -66,7 +74,15 @@ export default function Header() {
               {navItems.map((item) => (
                 <li key={item.name}>
                   <Link 
-                    href={item.path === '/menu' ? '#' : item.path === '/kitchen' ? '/kitchen/1' : item.path}
+                    href={
+                      item.path === '/menu' 
+                        ? '#' 
+                        : item.path === '/kitchen' 
+                          ? '/kitchen/1' 
+                          : item.path === '/bar'
+                            ? '/bar/1'
+                            : item.path
+                    }
                     className={cn(
                       "block py-2 hover:bg-primary-light px-2 rounded",
                       isActive(item.path) && "font-bold bg-primary-light"

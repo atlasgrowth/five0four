@@ -7,6 +7,7 @@ import { OrderWithItems, WebSocketMessage } from "@shared/types";
 import KitchenTicket from "@/components/kitchen/KitchenTicket";
 import { toast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { FloorSelector } from "@/components/ui/floor-selector";
 
 export default function Bar() {
   const params = useParams<{ floor: string }>();
@@ -135,6 +136,9 @@ export default function Bar() {
           </Button>
         </div>
       </div>
+      
+      {/* Floor Selector */}
+      <FloorSelector currentFloor={floor} urlPrefix="/bar" />
       
       {/* Bar Orders */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
