@@ -28,9 +28,11 @@ export interface OrderWithItems extends Order {
 
 // WebSocket message types
 export interface WebSocketMessage {
-  type: 'init-orders' | 'new-ticket' | 'order-paid' | 'status-updated';
-  order?: Order;
-  orders?: OrderWithItems[];
+  type: 'init-orders' | 'new-ticket' | 'status-update' | 'picked-up';
+  data: {
+    orders?: OrderWithItems[];
+    [key: string]: any;
+  };
 }
 
 // Create order payload schema

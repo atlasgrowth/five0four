@@ -1,6 +1,7 @@
 import { Server } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { parse } from 'url';
+import { log } from './vite';
 
 // Constants for kitchen order timing
 export const PREP_BUFFER = 120; // 2 minutes of prep time
@@ -8,9 +9,10 @@ export const EXPO_BUFFER = 180; // 3 minutes for expo
 
 // Define WebSocket message types
 export type WSMessageType = 
-  | 'new-ticket'    // New order created
-  | 'status-update' // Order status changed
-  | 'picked-up'     // Order picked up
+  | 'init-orders'     // Initial orders list
+  | 'new-ticket'      // New order created
+  | 'status-update'   // Order status changed
+  | 'picked-up'       // Order picked up
 
 // Define the message structure
 export interface WSMessage {
@@ -19,7 +21,11 @@ export interface WSMessage {
 }
 
 // Manage connections by room
-const connections: Record<string, Set<WebSocket>> = {
+type ConnectionsMap = {
+  [room: string]: Set<WebSocket>;
+};
+
+const connections: ConnectionsMap = {
   'kitchen': new Set<WebSocket>(),
   'expo': new Set<WebSocket>(),
   'servers': new Set<WebSocket>(),
@@ -54,7 +60,7 @@ export function setupWebSocketServer(server: Server) {
   
   // Handle new connections
   wss.on('connection', (ws: WebSocket, _request: any, room: string) => {
-    console.log(`New WebSocket connection to /${room}`);
+    log(`New WebSocket connection to room: ${room}`, 'ws');
     
     // Add to the appropriate room
     if (connections[room]) {
@@ -66,7 +72,7 @@ export function setupWebSocketServer(server: Server) {
     
     // Handle disconnection
     ws.on('close', () => {
-      console.log(`WebSocket disconnected from /${room}`);
+      log(`WebSocket disconnected from room: ${room}`, 'ws');
       if (connections[room]) {
         connections[room].delete(ws);
       }
@@ -78,12 +84,12 @@ export function setupWebSocketServer(server: Server) {
         const message = JSON.parse(data.toString()) as WSMessage;
         handleMessage(message, room);
       } catch (error) {
-        console.error('Error parsing WebSocket message:', error);
+        log(`Error parsing WebSocket message: ${error}`, 'error');
       }
     });
   });
   
-  console.log('WebSocket server initialized');
+  log('WebSocket server initialized', 'ws');
   return wss;
 }
 
@@ -91,11 +97,15 @@ export function setupWebSocketServer(server: Server) {
 export function broadcastToRoom(room: string, message: WSMessage) {
   if (connections[room]) {
     const clients = connections[room];
+    const messageStr = JSON.stringify(message);
+    
     clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify(message));
+        client.send(messageStr);
       }
     });
+    
+    log(`Broadcast message type=${message.type} to ${clients.size} clients in room: ${room}`, 'ws');
   }
 }
 
@@ -121,7 +131,7 @@ function handleMessage(message: WSMessage, sourceRoom: string) {
       break;
       
     default:
-      console.log(`Received message of type ${message.type} from ${sourceRoom}`);
+      log(`Received message of type ${message.type} from ${sourceRoom}`, 'ws');
   }
 }
 
@@ -133,16 +143,22 @@ async function sendInitialState(ws: WebSocket, room: string) {
     
     if (room === 'kitchen' || room === 'expo') {
       // Get active orders for kitchen/expo views
+      // Filter orders based on room (kitchen gets NEW or COOKING, expo gets PLATING or READY)
       const orders = await storage.getActiveOrders();
+      
+      // Filter based on room
+      const filteredOrders = room === 'kitchen' 
+        ? orders.filter(o => ['NEW', 'COOKING'].includes(o.status))
+        : orders.filter(o => ['PLATING', 'READY'].includes(o.status));
       
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'init-orders',
-          data: { orders }
+          data: { orders: filteredOrders }
         }));
       }
     }
   } catch (error) {
-    console.error('Error sending initial state:', error);
+    log(`Error sending initial state: ${error}`, 'error');
   }
 }

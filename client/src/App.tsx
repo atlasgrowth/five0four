@@ -8,6 +8,7 @@ import ServerPad from "@/pages/ServerPad";
 import Menu from "@/pages/Menu";
 import Kitchen from "@/pages/Kitchen";
 import Bar from "@/pages/Bar";
+import Expo from "@/pages/Expo";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 
@@ -19,7 +20,8 @@ function Router() {
         <Switch>
           <Route path="/" component={ServerPad} />
           <Route path="/menu/:floor/:bay" component={Menu} />
-          <Route path="/kitchen/:floor" component={Kitchen} />
+          <Route path="/kitchen" component={Kitchen} />
+          <Route path="/expo" component={Expo} />
           <Route path="/bar/:floor" component={Bar} />
           <Route component={NotFound} />
         </Switch>

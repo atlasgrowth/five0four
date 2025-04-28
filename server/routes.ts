@@ -1,10 +1,11 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
-import { WebSocketServer, WebSocket } from "ws";
 import { z } from "zod";
 import { storage } from "./storage";
 import { SquareClient } from "square";
 import { log } from "./vite";
+import { setupWebSocketServer, broadcastToRoom, WSMessage } from "./wsHub";
+import { createOrderSchema } from "@shared/types";
 
 // Square client setup
 export const sq = new SquareClient({
@@ -31,102 +32,11 @@ export const ordersApi = process.env.SQUARE_SANDBOX_TOKEN
   ? sq.orders
   : createMockOrdersApi();
 
-// WebSocket connections by floor and station
-interface FloorConnections {
-  [key: string]: WebSocket[];
-}
-const floorConnections: FloorConnections = {};
-
-// Send message to all connections for a specific floor
-function broadcastToFloor(floor: number, data: any) {
-  // Broadcast to both kitchen and bar stations for this floor
-  const kitchenKey = `kitchen:${floor}`;
-  const barKey = `bar:${floor}`;
-  
-  const message = JSON.stringify(data);
-  
-  // Send to kitchen connections
-  if (floorConnections[kitchenKey]) {
-    floorConnections[kitchenKey].forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
-    });
-  }
-  
-  // Send to bar connections
-  if (floorConnections[barKey]) {
-    floorConnections[barKey].forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
-    });
-  }
-}
-
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
-  // Initialize WebSocket server with path for both kitchen and bar
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
-
-  wss.on('connection', (ws, req) => {
-    const url = new URL(req.url || '', `http://${req.headers.host}`);
-    const floor = url.searchParams.get('floor');
-    const isKitchen = url.pathname.includes('/kitchen');
-    const isBar = url.pathname.includes('/bar');
-    
-    // Invalid connection without floor or specific station
-    if (!floor || (!isKitchen && !isBar)) {
-      ws.close();
-      return;
-    }
-
-    // Determine connection key based on station and floor
-    const connectionKey = isKitchen ? `kitchen:${floor}` : `bar:${floor}`;
-    
-    // Add to connections map
-    if (!floorConnections[connectionKey]) {
-      floorConnections[connectionKey] = [];
-    }
-    floorConnections[connectionKey].push(ws);
-
-    log(`WebSocket client connected to ${connectionKey}`);
-
-    // Send initial orders for the floor, filtered by station
-    storage.getOrdersByFloor(parseInt(floor, 10))
-      .then(orders => {
-        // For kitchen, send only items with station='Kitchen'
-        // For bar, send only items with station='Bar'
-        const filteredOrders = orders.map(order => {
-          // Clone the order to avoid modifying the original
-          const filteredOrder = { ...order };
-          
-          // Filter items by station
-          filteredOrder.items = order.items.filter(item => 
-            isKitchen ? item.station === 'Kitchen' : item.station === 'Bar'
-          );
-          
-          return filteredOrder;
-        }).filter(order => order.items.length > 0); // Only include orders with relevant items
-        
-        ws.send(JSON.stringify({
-          type: 'init-orders',
-          orders: filteredOrders
-        }));
-      })
-      .catch(err => {
-        log(`Error fetching orders for ${connectionKey}: ${err.message}`, 'error');
-      });
-
-    ws.on('close', () => {
-      // Remove from connections
-      if (floorConnections[connectionKey]) {
-        floorConnections[connectionKey] = floorConnections[connectionKey].filter(client => client !== ws);
-      }
-      log(`WebSocket client disconnected from ${connectionKey}`);
-    });
-  });
+  // Initialize WebSocket server
+  setupWebSocketServer(httpServer);
 
   // API Routes
   // Get menu items grouped by category
@@ -154,24 +64,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+  
+  // Get modifiers for a menu item
+  app.get('/api/menu/:id/modifiers', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const menuItemId = parseInt(id, 10);
+      
+      if (isNaN(menuItemId)) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Invalid menu item ID' 
+        });
+      }
+      
+      const modifiers = await storage.getModifiersForMenuItem(menuItemId);
+      
+      // Group modifiers by group_name
+      const modifiersByGroup = modifiers.reduce((acc: {[key: string]: any[]}, mod) => {
+        if (!acc[mod.group_name]) {
+          acc[mod.group_name] = [];
+        }
+        acc[mod.group_name].push(mod);
+        return acc;
+      }, {});
+      
+      res.json({ 
+        success: true, 
+        data: modifiersByGroup 
+      });
+    } catch (error: any) {
+      res.status(500).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
+  });
 
   // Create new order
   app.post('/api/orders', async (req: Request, res: Response) => {
     try {
-      // Validate request body
-      const orderSchema = z.object({
-        floor: z.number().int().min(1).max(3),
-        bay: z.number().int().min(1).max(25),
-        items: z.array(z.object({
-          id: z.number().int().positive(),
-          qty: z.number().int().positive()
-        }))
-      });
-
-      const validatedData = orderSchema.parse(req.body);
+      // Parse and validate the order data
+      const { floor, bay, items } = createOrderSchema.parse(req.body);
       
       // Check if items exist
-      const items = validatedData.items;
       if (items.length === 0) {
         return res.status(400).json({
           success: false,
@@ -181,9 +117,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create order in database
       const order = await storage.createOrder(
-        { floor: validatedData.floor, bay: validatedData.bay, status: 'OPEN' },
+        { floor, bay },
         items
       );
+      
+      // Get the full order details with items
+      const orderWithDetails = await storage.getOrderWithDetails(order.id);
+      
+      if (!orderWithDetails) {
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to retrieve order details'
+        });
+      }
+      
+      // Broadcast new ticket to kitchen
+      broadcastToRoom('kitchen', {
+        type: 'new-ticket',
+        data: orderWithDetails
+      } as WSMessage);
 
       // Create order in Square (stubbed if no token)
       try {
@@ -220,12 +172,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         log(`Square API error: ${squareError.message}`, 'error');
       }
 
-      // Broadcast new ticket to kitchen
-      broadcastToFloor(validatedData.floor, {
-        type: 'new-ticket',
-        order
-      });
-
       res.status(201).json({
         success: true,
         data: order
@@ -253,15 +199,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (event.type === 'payment.created') {
         const orderId = event.data?.object?.payment?.order_id;
         if (orderId) {
-          // Find order with this Square order ID and update status
-          const order = await storage.updateOrderStatus(orderId, 'PAID');
+          // Find order with this Square order ID and update status to COOKING
+          const order = await storage.updateOrderStatus(orderId, 'COOKING');
           
           if (order) {
-            // Broadcast status update
-            broadcastToFloor(order.floor, {
-              type: 'order-paid',
-              order
-            });
+            // Get full order details
+            const orderWithDetails = await storage.getOrderWithDetails(order.id);
+            
+            if (orderWithDetails) {
+              // Broadcast status update to kitchen and expo
+              broadcastToRoom('kitchen', {
+                type: 'status-update',
+                data: orderWithDetails
+              } as WSMessage);
+              
+              broadcastToRoom('expo', {
+                type: 'status-update',
+                data: orderWithDetails
+              } as WSMessage);
+            }
           }
         }
       }
@@ -286,6 +242,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
+      // Validate status transitions
+      const validStatuses = ['NEW', 'COOKING', 'PLATING', 'READY', 'PICKED_UP', 'CANCELLED'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+        });
+      }
+      
       // Update order status
       const updatedOrder = await storage.updateOrderStatus(id, status);
       
@@ -296,11 +261,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Broadcast status update
-      broadcastToFloor(updatedOrder.floor, {
-        type: 'status-updated',
-        order: updatedOrder
-      });
+      // Get full order details
+      const orderWithDetails = await storage.getOrderWithDetails(id);
+      
+      if (!orderWithDetails) {
+        return res.status(404).json({
+          success: false,
+          error: 'Order details not found'
+        });
+      }
+      
+      // Broadcast status update based on status
+      if (['NEW', 'COOKING'].includes(status)) {
+        // Kitchen needs to see these statuses
+        broadcastToRoom('kitchen', {
+          type: 'status-update',
+          data: orderWithDetails
+        } as WSMessage);
+      }
+      
+      if (['PLATING', 'READY'].includes(status)) {
+        // Expo needs to see these statuses
+        broadcastToRoom('expo', {
+          type: 'status-update',
+          data: orderWithDetails
+        } as WSMessage);
+      }
+      
+      if (status === 'PICKED_UP') {
+        // All stations need to know when order is picked up
+        broadcastToRoom('kitchen', {
+          type: 'picked-up',
+          data: orderWithDetails
+        } as WSMessage);
+        
+        broadcastToRoom('expo', {
+          type: 'picked-up',
+          data: orderWithDetails
+        } as WSMessage);
+        
+        broadcastToRoom('servers', {
+          type: 'picked-up',
+          data: orderWithDetails
+        } as WSMessage);
+      }
       
       res.json({
         success: true,
