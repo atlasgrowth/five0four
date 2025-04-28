@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ExpoWebSocket } from '@/lib/websocket';
 import { WebSocketMessage, OrderWithItems } from '@shared/types';
-import { formatLocation, formatTimer, getTimerStatus } from '@/lib/formatters';
-import { Badge } from '@/components/ui/badge';
+import { formatLocation, formatTimer } from '@/lib/formatters';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/queryClient';
+import { Separator } from '@/components/ui/separator';
 
 // Status progression for expo
 const NEXT_STATUS: Record<string, string> = {
@@ -35,6 +35,7 @@ export default function Expo() {
     setExpoWs(ws);
     
     ws.connect();
+    console.log(`Connected to expo WebSocket for floor ${floor}`);
     
     const removeMessageHandler = ws.onMessage((data: WebSocketMessage) => {
       handleWebSocketMessage(data);
@@ -44,6 +45,7 @@ export default function Expo() {
     return () => {
       removeMessageHandler();
       ws.disconnect();
+      console.log(`expo WebSocket closed for floor ${floor}`);
     };
   }, [floor]);
   
@@ -51,24 +53,20 @@ export default function Expo() {
   const handleWebSocketMessage = useCallback((data: WebSocketMessage) => {
     if (data.type === 'init-orders') {
       setOrders(data.data.orders || []);
+    } else if (data.type === 'new-ticket') {
+      setOrders(prev => {
+        // Make sure we're not adding duplicates
+        if (prev.some(o => o.id === data.data.id)) {
+          return prev;
+        }
+        return [...prev, data.data];
+      });
     } else if (data.type === 'status-update') {
       setOrders(prev => {
         const updatedOrder = data.data;
-        
-        // Check if we already have this order
-        const exists = prev.some(order => order.id === updatedOrder.id);
-        
-        if (exists) {
-          // Update existing order
-          return prev.map(order => 
-            order.id === updatedOrder.id ? updatedOrder : order
-          );
-        } else if (['PLATING', 'READY'].includes(updatedOrder.status || '')) {
-          // Add new order that reached plating status
-          return [...prev, updatedOrder];
-        }
-        
-        return prev;
+        return prev.map(order => 
+          order.id === updatedOrder.id ? updatedOrder : order
+        );
       });
     } else if (data.type === 'picked-up') {
       // Remove picked up orders
@@ -91,7 +89,16 @@ export default function Expo() {
         }
       });
       
-      // Update will come through WebSocket
+      // Optimistic update
+      setOrders(prev => 
+        prev.map(order => 
+          order.id === orderId 
+            ? { ...order, status: nextStatus } 
+            : order
+        )
+      );
+      
+      // Full update will come through WebSocket
     } catch (error) {
       console.error('Failed to update order status:', error);
     }
@@ -117,36 +124,48 @@ export default function Expo() {
   const expoOrders = orders.filter(o => 
     ['PLATING', 'READY'].includes(o.status || '')
   ).sort((a, b) => {
-    // First by status (PLATING before READY)
-    if (a.status === 'PLATING' && b.status === 'READY') return -1;
-    if (a.status === 'READY' && b.status === 'PLATING') return 1;
+    // Sort by status first (READY first, then PLATING)
+    if ((a.status === 'READY') && (b.status !== 'READY')) return -1;
+    if ((a.status !== 'READY') && (b.status === 'READY')) return 1;
     
-    // Then by time left (ascending)
+    // Then sort by time remaining (ascending)
     return getTimeLeft(a) - getTimeLeft(b);
   });
   
   // Render a badge for the order status
   const renderStatusBadge = (status: string) => {
-    const variant = 
-      status === 'PLATING' ? 'warning' : 
-      status === 'READY' ? 'success' : 
-      'outline';
+    let className = 'px-3 py-1 text-sm font-semibold rounded-full ';
+    
+    switch(status) {
+      case 'PLATING':
+        className += 'bg-blue-100 text-blue-800';
+        break;
+      case 'READY':
+        className += 'bg-green-100 text-green-800';
+        break;
+      default:
+        className += 'bg-gray-100 text-gray-800';
+    }
     
     return (
-      <Badge variant={variant}>{status}</Badge>
+      <span className={className}>{status}</span>
     );
   };
 
   return (
-    <div className="container mx-auto py-6">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">Expo Station</h1>
+    <div className="container mx-auto py-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+        <div>
+          <h1 className="mb-2">Expo Station</h1>
+          <p className="text-muted-foreground">Order assembly and delivery coordination</p>
+        </div>
         <div className="flex space-x-2">
           {[1, 2, 3].map(f => (
             <Button
               key={f}
               variant={floor === f ? 'default' : 'outline'}
               onClick={() => setFloor(f)}
+              className="w-24 h-12 text-lg"
             >
               Floor {f}
             </Button>
@@ -154,131 +173,78 @@ export default function Expo() {
         </div>
       </div>
       
-      <div className="flex">
-        <div className="w-1/2 pr-4">
-          <h2 className="text-xl font-bold mb-4">Plating</h2>
-          {expoOrders.filter(o => o.status === 'PLATING').length === 0 ? (
-            <div className="text-center py-8 bg-gray-50 rounded-lg border">
-              <p className="text-gray-400">No orders being plated</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {expoOrders.filter(o => o.status === 'PLATING').map(order => {
-                const timeLeft = getTimeLeft(order);
-                const timerStatus = getTimerStatus(timeLeft, 300); // 5 min baseline for visual indication
-                
-                return (
-                  <Card 
-                    key={order.id}
-                    className={`
-                      border-l-4 cursor-pointer hover:shadow-lg transition-shadow
-                      ${timerStatus === 'danger' ? 'border-l-red-500' : 
-                        timerStatus === 'warning' ? 'border-l-yellow-500' : 
-                        'border-l-green-500'}
-                    `}
-                    onClick={() => handleStatusUpdate(order.id, 'PLATING')}
-                  >
-                    <div className="p-4">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <h3 className="text-lg font-bold">{formatLocation(order.floor, order.bay)}</h3>
-                          <div className="mt-1">{renderStatusBadge('PLATING')}</div>
-                        </div>
-                        <div className={`
-                          text-xl font-mono font-bold
-                          ${timerStatus === 'danger' ? 'text-red-500' : 
-                            timerStatus === 'warning' ? 'text-yellow-500' : 
-                            'text-green-500'}
-                        `}>
-                          {formatTimer(timeLeft)}
-                        </div>
-                      </div>
-                      
-                      <div className="mt-3">
-                        <h4 className="text-sm font-semibold text-gray-500 mb-1">
-                          {getTotalItems(order)} items
-                        </h4>
-                        <ul className="text-sm space-y-1">
-                          {order.items.map((item, index) => (
-                            <li key={index}>
-                              {item.qty}x {item.name}
-                              {item.modifiers && item.modifiers.length > 0 && (
-                                <span className="text-xs italic ml-2">
-                                  {item.modifiers.map(m => m.name).join(', ')}
-                                </span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+      {expoOrders.length === 0 ? (
+        <div className="text-center py-24 bg-muted/30 rounded-lg border border-dashed">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto mb-4 text-muted-foreground">
+            <path d="M22 12.5V10c0-.69-.35-1.3-.88-1.66a2.91 2.91 0 0 1-1.17-1.1 2.8 2.8 0 0 1-.36-1.46l.001-.32a2 2 0 0 0-2-2.12 2 2 0 0 0-2 2 4 4 0 0 1-2 3.46 4 4 0 0 1-2 .54H4"></path>
+            <path d="m19 16-7-4"></path>
+            <path d="M15 12V5"></path>
+            <path d="M15 5h-3"></path>
+            <circle cx="7" cy="16" r="5"></circle>
+            <path d="M7 19v-2.1a2 2 0 0 1 .59-1.42c.37-.38.87-.58 1.41-.58h4"></path>
+          </svg>
+          <h2 className="text-2xl text-muted-foreground font-medium">No Orders Ready</h2>
+          <p className="text-muted-foreground mt-1">Orders in plating or ready for pickup will appear here</p>
         </div>
-        
-        <div className="w-1/2 pl-4">
-          <h2 className="text-xl font-bold mb-4">Ready for Pickup</h2>
-          {expoOrders.filter(o => o.status === 'READY').length === 0 ? (
-            <div className="text-center py-8 bg-gray-50 rounded-lg border">
-              <p className="text-gray-400">No orders ready for pickup</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {expoOrders.filter(o => o.status === 'READY').map(order => {
-                const timeLeft = getTimeLeft(order);
-                const timerStatus = getTimerStatus(timeLeft, 300); // 5 min baseline for expo
-                
-                return (
-                  <Card 
-                    key={order.id}
-                    className={`
-                      border-l-4 cursor-pointer hover:shadow-lg transition-shadow
-                      border-l-green-500 bg-green-50
-                    `}
-                    onClick={() => handleStatusUpdate(order.id, 'READY')}
-                  >
-                    <div className="p-4">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <h3 className="text-lg font-bold">{formatLocation(order.floor, order.bay)}</h3>
-                          <div className="mt-1">{renderStatusBadge('READY')}</div>
-                        </div>
-                        <Button size="sm" variant="default" onClick={(e) => {
-                          e.stopPropagation();
-                          handleStatusUpdate(order.id, 'READY');
-                        }}>
-                          Mark Picked Up
-                        </Button>
-                      </div>
-                      
-                      <div className="mt-3">
-                        <h4 className="text-sm font-semibold text-gray-500 mb-1">
-                          {getTotalItems(order)} items
-                        </h4>
-                        <ul className="text-sm space-y-1">
-                          {order.items.map((item, index) => (
-                            <li key={index}>
-                              {item.qty}x {item.name}
-                              {item.modifiers && item.modifiers.length > 0 && (
-                                <span className="text-xs italic ml-2">
-                                  {item.modifiers.map(m => m.name).join(', ')}
-                                </span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {expoOrders.map(order => {
+            const isReady = order.status === 'READY';
+            
+            return (
+              <Card 
+                key={order.id}
+                className={`station-card cursor-pointer
+                  ${isReady ? 'border-l-green-500' : 'border-l-blue-500'}
+                `}
+                onClick={() => handleStatusUpdate(order.id, order.status || 'PLATING')}
+              >
+                <div className="p-6">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h3 className="text-xl font-bold">{formatLocation(order.floor, order.bay)}</h3>
+                      <div className="mt-2">{renderStatusBadge(order.status || 'PLATING')}</div>
                     </div>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+                    <div className="text-xl font-medium">
+                      {isReady ? (
+                        <span className="px-3 py-1 bg-green-500 text-white rounded-xl">
+                          PICKUP
+                        </span>
+                      ) : (
+                        <span className="text-xl font-mono text-blue-500">
+                          {formatTimer(getTimeLeft(order))}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <Separator className="my-4" />
+                  
+                  <div className="mt-4">
+                    <h4 className="text-lg font-semibold mb-3">
+                      {getTotalItems(order)} items
+                    </h4>
+                    <ul className="space-y-3">
+                      {order.items.map((item, index) => (
+                        <li key={index} className="flex flex-col">
+                          <div className="flex justify-between">
+                            <span className="font-medium">{item.qty}x {item.name}</span>
+                          </div>
+                          {item.modifiers && item.modifiers.length > 0 && (
+                            <span className="text-sm text-muted-foreground mt-1 italic">
+                              {item.modifiers.map(m => m.name).join(', ')}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
         </div>
-      </div>
+      )}
     </div>
   );
 }

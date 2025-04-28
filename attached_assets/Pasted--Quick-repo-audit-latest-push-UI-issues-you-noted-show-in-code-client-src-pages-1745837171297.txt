@@ -1,0 +1,110 @@
+### Quick repo audit (latest push)
+
+* **UI issues you noted show in code:**
+  * `client/src/pages/ServerPad.tsx` adds items straight to cart with no qty/- button.  
+  * `client/src/components/BaySelector.tsx` uses small Tailwind classes (`w-16 h-12 text-xs`) – looks cramped.  
+  * `client/src/pages/Kitchen.tsx` prints floor headers (“4-1-2-3”) instead of bays and never computes the timer (all zeros) because `cook_seconds` isn’t loaded into state.  
+  * No `expo` view; “Kitchen” and “Expo” share one page.  
+
+* **DB side**
+  * `orders` table has `timer_end` column but kitchen query ignores it.  
+  * No `order_modifiers` table, so variations can’t be stored.  
+
+* **CSS / UX**
+  * Tailwind colors still default gray; no hover or selected states.  
+  * Grid gaps are small; hard to tap on an iPad.  
+
+---
+
+## What a solid fix looks like
+
+1. **Bigger, nicer bay selector** (responsive grid, colored states).  
+2. **ServerPad**  
+   * search bar + category filter  
+   * click item ➜ “Add to order” modal with qty stepper, minus button  
+   * cart line shows qty × item, tap qty to edit or remove line  
+3. **Kitchen / Expo split**  
+   * `/kitchen` shows all tickets (NEW, COOKING)  
+   * `/expo` shows PLATING / READY  
+   * card uses `timer_end` to count down; color rules (green < 80 %, yellow 80-100 %, red > 100 %).  
+4. **WebSocket broadcast** on every order or state change.  
+5. Tailwind theme – larger fonts (`text-lg`), buttons (`py-3 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white`).
+
+---
+
+## One-shot Replit-Agent prompt
+
+Copy everything from `====` to the end into Replit AI-agent.
+
+```
+🛠️  “USABLE UI + WORKING TIMERS” PATCH
+=====================================
+
+OBJECTIVE
+---------
+1.  Clean-looking bay selector
+2.  ServerPad with qty +/- and “Add to order” confirmation
+3.  Kitchen and Expo pages with live timers & color change
+4.  Websocket hub keeps pages in sync
+
+TASK LIST
+=========
+
+①  BaySelector
+   • grid max 5 cols; each bay button: class="w-24 h-20 text-lg rounded-xl border bg-slate-100 hover:bg-emerald-200"
+   • highlight selected bay in sky-400.
+
+②  Menu & Cart UX
+   • Modal component (Radix/Dialog or simple div):
+       shows item name, qty stepper (-, number, +) and “Add to cart”.
+   • Cart list: qty × item, price, trash-icon button to remove line.
+   • SEND disabled when cart empty.
+
+③  WebSocket Hub  (server/ws.ts)
+   ```ts
+   import { WebSocketServer } from "ws";
+   export const wss = new WebSocketServer({ noServer:true });
+
+   export function broadcast(room:string, msg:any){
+     wss.clients.forEach(c=>{
+       if((c as any).room===room && c.readyState===1) c.send(JSON.stringify(msg));
+     });
+   }
+   ```
+   • upgrade handler: `/ws/:room` sets `(ws as any).room = params.room`.
+
+④  /api/orders  (update)
+   • after DB insert: `broadcast("kitchen", {type:"new", order})`
+
+⑤  Kitchen page (`client/src/pages/Kitchen.tsx`)
+   • use `useWebSocket("kitchen")`
+   • state = list of tickets
+   • countdown: `(timer_end - Date.now())/1000`
+   • bg-color set by pct remaining.
+
+⑥  Expo page  (duplicate Kitchen but filter state>=“PLATING”)
+
+⑦  Timer fix
+   • on order insert: `timer_end = now + cook_seconds_longest + 120 + 180`
+   • kitchen shows seconds, formats mm:ss.
+
+⑧  Tailwind tweaks
+   • `@layer components` section in tailwind.config for `.btn, .card`.
+
+TEST
+----
+npm run dev
+• home page → bigger bays
+• menu → modal qty, cart editable
+• SEND → ticket appears in /kitchen, timer counts, color flips
+• click card → advance state → disappears on Expo “PICKED UP”
+
+Print **“✅ UI & timers live”** when these checks pass.
+```
+
+---
+
+### After the agent prints ✅
+
+1. **Refresh three tabs** (`/`, `/kitchen`, `/expo`) – confirm flow.  
+2. Push commit; paste commit hash here and we’ll review final polish or Square re-hook.
