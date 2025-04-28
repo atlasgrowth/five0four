@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 
 type Item = {
+  id: number;
   square_id: string;
   name: string;
   price_cents: number;
@@ -13,6 +15,8 @@ export default function ServerPad() {
   const [items, setItems] = useState<Item[]>([]);
   const [cart, setCart] = useState<Record<string, number>>({});
   const [cat, setCat] = useState<string>("");
+  const [sending, setSending] = useState(false);
+  const [, navigate] = useLocation();
 
   /* -------- fetch menu once -------- */
   useEffect(() => {
@@ -50,7 +54,11 @@ export default function ServerPad() {
     );
 
   /* -------- main menu UI -------- */
-  const cats = [...new Set(items.map((i) => i.category))];
+  // Get unique categories using a different approach to avoid Set iteration issues
+  const cats = items
+    .map(i => i.category)
+    .filter((cat, index, self) => self.indexOf(cat) === index);
+  
   const add = (id: string) => setCart((c) => ({ ...c, [id]: (c[id] || 0) + 1 }));
   const total = Object.entries(cart).reduce(
     (sum, [id, q]) => sum + (items.find((i) => i.square_id === id)?.price_cents || 0) * q,
@@ -108,10 +116,42 @@ export default function ServerPad() {
           ${ (total / 100).toFixed(2) }
         </div>
         <button
-          className="mt-4 w-full bg-green-600 text-white py-2 rounded"
-          onClick={() => console.log("SEND payload:", { floor, bay, cart })}
+          className={`mt-4 w-full py-2 rounded ${sending ? 'bg-gray-400' : 'bg-green-600 text-white'}`}
+          onClick={async () => {
+            if (sending || Object.keys(cart).length === 0) return;
+            
+            setSending(true);
+            try {
+              const payload = {
+                floor,
+                bay,
+                items: Object.entries(cart).map(([sid, qty]) => {
+                  const itm = items.find((i) => i.square_id === sid)!;
+                  return { id: itm.id, name: itm.name, price_cents: itm.price_cents, qty };
+                }),
+              };
+              
+              const resp = await fetch("/api/orders", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              }).then((r) => r.json());
+              
+              console.log("Square order:", resp.squareOrderId);
+              setCart({});
+              alert(`Order sent! Square ID: ${resp.squareOrderId}`);
+              // Optional: Navigate to kitchen view
+              // navigate("/kitchen");
+            } catch (err) {
+              console.error("Error sending order:", err);
+              alert("Error sending order. Please try again.");
+            } finally {
+              setSending(false);
+            }
+          }}
+          disabled={sending || Object.keys(cart).length === 0}
         >
-          SEND (placeholder)
+          {sending ? "SENDING..." : "SEND ORDER"}
         </button>
       </div>
     </div>
