@@ -3,7 +3,7 @@ import { WebSocketMessage } from "@shared/types";
 type MessageHandler = (data: WebSocketMessage) => void;
 type ConnectHandler = () => void;
 type ErrorHandler = (event: Event) => void;
-type StationType = 'kitchen' | 'bar';
+type StationType = 'kitchen' | 'bar' | 'expo' | 'servers';
 
 export class StationWebSocket {
   private ws: WebSocket | null = null;
@@ -114,5 +114,19 @@ export class KitchenWebSocket extends StationWebSocket {
 export class BarWebSocket extends StationWebSocket {
   constructor(floor: number) {
     super(floor, 'bar');
+  }
+}
+
+// Expo WebSocket client
+export class ExpoWebSocket extends StationWebSocket {
+  constructor(floor: number) {
+    super(floor, 'expo');
+  }
+}
+
+// Servers WebSocket client
+export class ServersWebSocket extends StationWebSocket {
+  constructor(floor: number) {
+    super(floor, 'servers');
   }
 }

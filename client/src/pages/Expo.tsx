@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { KitchenWebSocket } from '@/lib/websocket';
+import { ExpoWebSocket } from '@/lib/websocket';
 import { WebSocketMessage, OrderWithItems } from '@shared/types';
 import { formatLocation, formatTimer, getTimerStatus } from '@/lib/formatters';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +16,7 @@ const NEXT_STATUS: Record<string, string> = {
 export default function Expo() {
   const [floor, setFloor] = useState(1);
   const [orders, setOrders] = useState<OrderWithItems[]>([]);
-  const [expoWs, setExpoWs] = useState<KitchenWebSocket | null>(null);
+  const [expoWs, setExpoWs] = useState<ExpoWebSocket | null>(null);
   const [counters, setCounters] = useState<Record<string, number>>({});
   
   // Set up timer to update every second
@@ -31,8 +31,7 @@ export default function Expo() {
   
   // Connect to WebSocket on component mount
   useEffect(() => {
-    // We're reusing KitchenWebSocket but targeting the 'expo' room
-    const ws = new KitchenWebSocket(floor);
+    const ws = new ExpoWebSocket(floor);
     setExpoWs(ws);
     
     ws.connect();
@@ -247,7 +246,7 @@ export default function Expo() {
                           <h3 className="text-lg font-bold">{formatLocation(order.floor, order.bay)}</h3>
                           <div className="mt-1">{renderStatusBadge('READY')}</div>
                         </div>
-                        <Button size="sm" variant="success" onClick={(e) => {
+                        <Button size="sm" variant="default" onClick={(e) => {
                           e.stopPropagation();
                           handleStatusUpdate(order.id, 'READY');
                         }}>
