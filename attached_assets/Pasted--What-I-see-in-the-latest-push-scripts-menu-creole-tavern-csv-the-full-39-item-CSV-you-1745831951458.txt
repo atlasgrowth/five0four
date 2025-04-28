@@ -1,0 +1,131 @@
+### What I see in the latest push
+* **`scripts/menu_creole_tavern.csv`** – the full 39-item CSV you pasted above (good).  
+* **`menu_items` table** still contains the dummy rows (“Breakfast / Beverages…”).  
+* React ServerPad still shows the hard-coded tabs because those dummy rows are present.  
+* Your seed script is pointing to `sandbox_catalog.json`, not the local CSV.
+
+---
+
+## Fastest fix (keeps everything local — no Square catalog needed)
+
+1. **Delete every row in `menu_items`.**  
+   ```bash
+   psql -c "TRUNCATE TABLE menu_items;"
+   ```
+
+2. **Replace the seed script** to load **exactly** `scripts/menu_creole_tavern.csv`.  
+   Create `scripts/seedMenuFromCSV.ts`:
+
+   ```ts
+   import fs from "fs";
+   import { parse } from "csv-parse/sync";
+   import { db } from "../server/db";
+   import { menu_items } from "../shared/schema";
+
+   const rows = parse(fs.readFileSync("scripts/menu_creole_tavern.csv"), {
+     columns: true, skip_empty_lines: true,
+   });
+
+   await db.transaction(async tx => {
+     for (const r of rows) {
+       await tx.insert(menu_items).values({
+         square_id: r.SKU || crypto.randomUUID(),   // placeholder
+         name:      r.Name,
+         description: r.Description,
+         category:  r.Category,
+         price_cents: Math.round(parseFloat(r.Price) * 100),
+         station:   r.Category === "Drinks" ? "Bar" : "Kitchen",
+         cook_seconds: 300,
+         active: true,
+       });
+     }
+   });
+   console.log("Seeded", rows.length, "rows");
+   process.exit(0);
+   ```
+
+   Add script to `package.json`  
+   ```json
+   "seed:menu": "tsx scripts/seedMenuFromCSV.ts"
+   ```
+
+3. **Run**
+
+   ```bash
+   npm run seed:menu
+   psql -c "SELECT DISTINCT category FROM menu_items ORDER BY 1;"
+   ```
+
+   You should see the 11 real categories (Shareables, Burgers, …) and **no** breakfast/beverage junk.
+
+4. **Remove dummy data import in React**  
+   Ensure **ServerPad.tsx** loads menu via `fetch("/api/menu")` and builds tabs with:
+   ```ts
+   const cats = [...new Set(items.map(i => i.category))];
+   ```
+   Delete any leftover import like `import menu from "../data/menu"`
+
+---
+
+### One-block Replit-Agent prompt
+
+Copy / paste this into Replit AI-agent so it does all the above edits:
+
+```
+🛠️  SEED REAL CSV + DROP DUMMY TABS
+==================================
+
+GOAL
+----
+• Wipe dummy menu items
+• Seed database from scripts/menu_creole_tavern.csv (39 rows)
+• ServerPad tabs come only from DB categories
+
+STEPS
+=====
+
+1. 🔄  Create scripts/seedMenuFromCSV.ts
+   (use code block below)
+
+2. ➕  package.json
+   "seed:menu": "tsx scripts/seedMenuFromCSV.ts"
+
+3. 🗑️  TRUNCATE table then seed
+   shell:
+     psql -c "TRUNCATE TABLE menu_items;"
+     npm run seed:menu
+
+4. 🖥️  React cleanup
+   • Ensure ServerPad.tsx fetches /api/menu and builds
+     tabs via: const cats = [...new Set(items.map(i=>i.category))]
+   • remove any leftover import of dummy data
+
+5. ✅  Test
+   • npm run dev
+   • Floor → Bay → Menu shows 11 real categories (Shareables, Burgers …)
+   • No Breakfast / Beverages tabs.
+
+Print **“✅ real CSV menu live”** when ready.
+```
+
+*(Include the seed script code block inside the prompt.)*
+
+---
+
+### After Agent prints ✅
+
+Run:
+
+```bash
+curl http://localhost:5000/api/menu | jq '.[0] | {name,category}'
+```
+
+If you see `"category":"Shareables"` etc., push the commit:
+
+```bash
+git add scripts/seedMenuFromCSV.ts package.json client server
+git commit -m "Seed menu from local CSV; remove dummy data"
+git push
+```
+
+Then the SEND-to-Square flow we wired yesterday will work with correct categories, and the kitchen logic can proceed.
