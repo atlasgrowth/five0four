@@ -27,6 +27,7 @@ type ConnectionsMap = {
 
 const connections: ConnectionsMap = {
   'kitchen': new Set<WebSocket>(),
+  'bar': new Set<WebSocket>(),
   'expo': new Set<WebSocket>(),
   'servers': new Set<WebSocket>(),
 };
@@ -48,7 +49,7 @@ export function setupWebSocketServer(server: Server) {
     const room = match[1];
     
     // Validate the room
-    if (!['kitchen', 'expo', 'servers'].includes(room)) {
+    if (!['kitchen', 'bar', 'expo', 'servers'].includes(room)) {
       socket.destroy();
       return;
     }
@@ -120,14 +121,24 @@ export function broadcastToAll(message: WSMessage) {
 function handleMessage(message: WSMessage, sourceRoom: string) {
   switch (message.type) {
     case 'status-update':
-      // Broadcast status updates to kitchen and expo
+      // Broadcast status updates to appropriate stations
       broadcastToRoom('kitchen', message);
+      broadcastToRoom('bar', message);
       broadcastToRoom('expo', message);
       break;
       
     case 'picked-up':
       // Broadcast picked-up events to all
       broadcastToAll(message);
+      break;
+      
+    case 'new-ticket':
+      // Check if this new ticket contains kitchen or bar items
+      if (message.data?.station === 'Kitchen') {
+        broadcastToRoom('kitchen', message);
+      } else if (message.data?.station === 'Bar') {
+        broadcastToRoom('bar', message);
+      }
       break;
       
     default:
@@ -141,15 +152,43 @@ async function sendInitialState(ws: WebSocket, room: string) {
     // Import here to avoid circular dependency
     const { storage } = await import('./storage');
     
-    if (room === 'kitchen' || room === 'expo') {
-      // Get active orders for kitchen/expo views
-      // Filter orders based on room (kitchen gets NEW or COOKING, expo gets PLATING or READY)
+    if (room === 'kitchen' || room === 'bar' || room === 'expo') {
+      // Get active orders 
       const orders = await storage.getActiveOrders();
       
-      // Filter based on room
-      const filteredOrders = room === 'kitchen' 
-        ? orders.filter(o => o.status && ['NEW', 'COOKING'].includes(o.status))
-        : orders.filter(o => o.status && ['PLATING', 'READY'].includes(o.status));
+      // Filter based on room and station
+      let filteredOrders;
+      
+      if (room === 'kitchen') {
+        // Kitchen gets food items that are NEW or COOKING
+        filteredOrders = orders
+          .filter(o => o.status && ['NEW', 'COOKING'].includes(o.status))
+          .map(order => {
+            // Only include items with station="Kitchen"
+            return {
+              ...order,
+              items: order.items.filter(item => item.station === 'Kitchen')
+            };
+          })
+          .filter(order => order.items.length > 0); // Only orders with kitchen items
+      } 
+      else if (room === 'bar') {
+        // Bar gets drink items that are NEW or COOKING
+        filteredOrders = orders
+          .filter(o => o.status && ['NEW', 'COOKING'].includes(o.status))
+          .map(order => {
+            // Only include items with station="Bar"
+            return {
+              ...order,
+              items: order.items.filter(item => item.station === 'Bar')
+            };
+          })
+          .filter(order => order.items.length > 0); // Only orders with bar items
+      }
+      else {
+        // Expo gets all items that are PLATING or READY
+        filteredOrders = orders.filter(o => o.status && ['PLATING', 'READY'].includes(o.status));
+      }
       
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({

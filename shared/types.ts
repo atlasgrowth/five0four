@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MenuItem, Order, OrderItem } from './schema';
+import { MenuItem, Order, OrderItem, MenuModifier } from './schema';
 
 // API response types
 export interface ApiResponse<T> {
@@ -37,6 +37,7 @@ export interface WebSocketMessage {
   type: 'init-orders' | 'new-ticket' | 'status-update' | 'picked-up';
   data: {
     orders?: OrderWithItems[];
+    station?: 'Kitchen' | 'Bar' | 'Expo';
     [key: string]: any;
   };
 }
