@@ -123,15 +123,19 @@ export default function Bar() {
   };
 
   return (
-    <div className="container mx-auto py-6">
+    <div className="container mx-auto py-8">
       <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">Bar Display</h1>
+        <div>
+          <h1 className="mb-2">Bar Display</h1>
+          <p className="text-muted-foreground">Station view for bartenders</p>
+        </div>
         <div className="flex space-x-2">
           {[1, 2, 3].map(f => (
             <Button
               key={f}
               variant={floor === f ? 'default' : 'outline'}
               onClick={() => setFloor(f)}
+              className="px-6"
             >
               Floor {f}
             </Button>
@@ -140,12 +144,13 @@ export default function Bar() {
       </div>
       
       {barOrders.length === 0 ? (
-        <div className="text-center py-16">
-          <h2 className="text-2xl text-gray-400">No active orders</h2>
-          <p className="text-gray-500">New drink orders will appear here</p>
+        <div className="text-center py-24 bg-muted/30 rounded-lg border border-dashed">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto mb-4 text-muted-foreground"><path d="M8 22h8"></path><path d="M7 10h10"></path><path d="M10 14h4"></path><rect width="16" height="6" x="4" y="4" rx="2"></rect><path d="M4 10v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"></path></svg>
+          <h2 className="text-2xl text-muted-foreground font-medium">No Active Orders</h2>
+          <p className="text-muted-foreground mt-1">New drink orders will appear here</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid-layout">
           {barOrders.map(order => {
             const timeLeft = getTimeLeft(order);
             const timerStatus = getTimerStatus(timeLeft, 300); // 5 min baseline for drinks
@@ -153,10 +158,9 @@ export default function Bar() {
             return (
               <Card 
                 key={order.id}
-                className={`
-                  border-l-4 cursor-pointer hover:shadow-lg transition-shadow
+                className={`station-card cursor-pointer
                   ${timerStatus === 'danger' ? 'border-l-red-500' : 
-                    timerStatus === 'warning' ? 'border-l-yellow-500' : 
+                    timerStatus === 'warning' ? 'border-l-amber-500' : 
                     'border-l-blue-500'}
                 `}
                 onClick={() => handleStatusUpdate(order.id, order.status || 'NEW')}
@@ -169,8 +173,8 @@ export default function Bar() {
                     </div>
                     <div className={`
                       text-xl font-mono font-bold
-                      ${timerStatus === 'danger' ? 'text-red-500' : 
-                        timerStatus === 'warning' ? 'text-yellow-500' : 
+                      ${timerStatus === 'danger' ? 'timer-danger' : 
+                        timerStatus === 'warning' ? 'timer-warning' : 
                         'text-blue-500'}
                     `}>
                       {formatTimer(timeLeft)}

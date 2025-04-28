@@ -22,7 +22,7 @@ function Router() {
           <Route path="/menu/:floor/:bay" component={Menu} />
           <Route path="/kitchen" component={Kitchen} />
           <Route path="/expo" component={Expo} />
-          <Route path="/bar/:floor" component={Bar} />
+          <Route path="/bar" component={Bar} />
           <Route component={NotFound} />
         </Switch>
       </div>
