@@ -106,10 +106,17 @@ export default function KitchenTicket({ order, onStatusUpdate }: KitchenTicketPr
           {order.items.map((item) => (
             <div key={item.id} className="py-2 flex items-center">
               <div className="font-medium text-lg mr-2">{item.qty}</div>
-              <div>
+              <div className="flex-grow">
                 <div className="font-medium">{item.name}</div>
                 <div className="text-sm text-gray-600">{formatCookTime(item.cook_seconds)}</div>
               </div>
+              {item.station && (
+                <div className={`text-xs font-medium px-2 py-1 rounded ${
+                  item.station === "Kitchen" ? "bg-blue-100 text-blue-800" : "bg-amber-100 text-amber-800"
+                }`}>
+                  {item.station}
+                </div>
+              )}
             </div>
           ))}
         </div>
