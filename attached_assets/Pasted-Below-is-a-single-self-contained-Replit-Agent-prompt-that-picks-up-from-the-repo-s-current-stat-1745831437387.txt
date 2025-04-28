@@ -1,0 +1,129 @@
+Below is a **single, self-contained Replit-Agent prompt** that picks up from the repo’s current state (commit you just pushed).  
+Paste it into Replit AI-agent chat **once**; it will:
+
+* audit the codebase,
+* remove the last hard-coded menu remnants,
+* wire the `/api/orders` route that sends custom line-items to Square,
+* make the **SEND** button call that route and clear the cart,
+* leave a TODO comment where you’ll later broadcast to kitchen WebSocket.
+
+I also list the three console messages you should look for to confirm success.
+
+---
+
+```
+🛠️  “REAL MENU + REAL SQUARE ORDER” PATCH
+========================================
+
+GOAL
+----
+1. ServerPad shows ONLY categories that exist in menu_items table.
+2. SEND button posts to /api/orders, which forwards a custom line-item
+   payload to Square Sandbox and stores the order locally.
+3. Console shows Square order ID; cart clears.
+
+REPO AUDIT (read-only)
+----------------------
+• client/src/pages          → look for leftover dummy tabs / data files
+• server/routes             → ensure /api/menu exists; create /api/orders
+• shared/schema.ts          → confirm menu_items table has category + name
+• server/db.ts              → confirm db export exists
+
+CHANGES
+=======
+
+1. 🗑️  Delete any hard-coded menu JSON:
+   • remove client/src/data/menu.ts (or similar)
+   • remove its import anywhere it appears.
+
+2. 🖥️  Server route:  server/routes/orders.ts
+   ```ts
+   import { Router } from "express";
+   import fetch from "node-fetch";
+   import crypto from "crypto";
+   import { db } from "../db";
+   import { orders, order_items } from "../../shared/schema";
+
+   export const ordersRouter = Router();
+
+   ordersRouter.post("/api/orders", async (req, res) => {
+     const { floor, bay, items } = req.body;   // items = [{id,name,price_cents,qty}]
+     const lineItems = items.map((i: any)=>({
+       name: i.name,
+       quantity: i.qty.toString(),
+       base_price_money: { amount: i.price_cents, currency: "USD" }
+     }));
+
+     const sqResp = await fetch("https://connect.squareupsandbox.com/v2/orders",{
+       method:"POST",
+       headers:{
+         "Square-Version":"2025-04-16",
+         Authorization:`Bearer ${process.env.SQUARE_SANDBOX_TOKEN}`,
+         "Content-Type":"application/json"
+       },
+       body: JSON.stringify({
+         idempotency_key: crypto.randomUUID(),
+         order:{ location_id: process.env.SQUARE_SANDBOX_LOCATION,
+                 line_items: lineItems }
+       })
+     }).then(r=>r.json());
+
+     const squareOrderId = sqResp.order?.id ?? "ERROR_"+Date.now();
+
+     const orderId = crypto.randomUUID();
+     await db.insert(orders).values({ id:orderId, floor, bay, square_order_id:squareOrderId });
+     for(const it of items){
+       await db.insert(order_items).values({ order_id:orderId, menu_item_id:it.id, qty:it.qty });
+     }
+
+     // TODO: broadcast to kitchen WebSocket here
+
+     res.json({ orderId, squareOrderId });
+   });
+   ```
+   • export this router from server/index.ts  `app.use(ordersRouter);`
+
+3. 🛒  Client: client/src/pages/ServerPad.tsx
+   • Ensure tabs come from DB:
+     `const cats = [...new Set(items.map(i=>i.category))];`
+   • Remove any static array like [ "Breakfast", … ].
+   • Replace SEND handler with:
+   ```tsx
+   async function send(){
+     const payload = {
+       floor, bay,
+       items: Object.entries(cart).map(([sid,qty])=>{
+         const itm = items.find(i=>i.square_id===sid)!;
+         return { id: itm.id, name: itm.name, price_cents: itm.price_cents, qty };
+       })
+     };
+     const resp = await fetch("/api/orders",{method:"POST",
+       headers:{ "Content-Type":"application/json" },
+       body:JSON.stringify(payload)}).then(r=>r.json());
+     console.log("Square order", resp.squareOrderId);
+     setCart({});
+   }
+   ```
+
+4. ✅  Test script (will run in dev console)
+   • `npm run dev`
+   • Browser: Floor 1 → Bay 101 → add two items → SEND
+   • Check browser console – should log “Square order URcl9qs6yfwPtH…”
+   • Square Sandbox Dashboard ▸ Tickets shows OPEN ticket
+   • Cart resets to empty.
+
+Print **“✅ order→Square live”** when:
+   1. `/api/menu` returns JSON (39 rows)
+   2. SEND creates a Square ticket (verify in Dashboard)
+   3. Console shows the order ID and cart clears
+```
+
+---
+
+### What to watch for in Replit logs
+
+1. **`Square order <id>`** in browser console after Send.  
+2. **`POST /api/orders 200`** in server logs.  
+3. Ticket appears in **Square Sandbox Dashboard → Tickets** with the correct items.
+
+After the agent prints **`✅ order→Square live`** and you confirm the 3 checks, ping me with the new commit hash and we’ll add the kitchen WebSocket broadcast and payment webhook.
