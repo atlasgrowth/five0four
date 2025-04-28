@@ -11,8 +11,6 @@
     "db:push": "drizzle-kit push",
     "pull:catalog": "node scripts/pullCatalog.js",
       "seed:menu":    "tsx scripts/seedMenuFromJson.ts",
-    }
-
     "sync:catalog": "tsx server/jobs/syncSquareCatalog.ts"
   },
   "dependencies": {
