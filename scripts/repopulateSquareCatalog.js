@@ -1,10 +1,58 @@
 
 // scripts/repopulateSquareCatalog.js
 import { randomUUID } from "node:crypto";
+import fs from "fs";
 
 const token = process.env.SQUARE_SANDBOX_TOKEN;
 const ver   = "2025-04-16";
 if (!token) throw new Error("Missing SQUARE_SANDBOX_TOKEN");
+
+// First clear existing catalog
+async function clearCatalog() {
+  console.log("Checking for existing catalog items...");
+  
+  try {
+    const listRes = await fetch(
+      "https://connect.squareupsandbox.com/v2/catalog/list?types=ITEM,ITEM_VARIATION,CATEGORY",
+      {
+        headers: {
+          "Square-Version": ver,
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    
+    const listJson = await listRes.json();
+    const existingIds = (listJson.objects || []).map((o) => o.id);
+    
+    if (existingIds.length > 0) {
+      console.log(`Found ${existingIds.length} existing objects. Deleting them first...`);
+      
+      const batchRes = await fetch(
+        "https://connect.squareupsandbox.com/v2/catalog/batch-delete",
+        {
+          method: "POST",
+          headers: {
+            "Square-Version": ver,
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            object_ids: existingIds,
+          }),
+        }
+      );
+      
+      const batchJson = await batchRes.json();
+      console.log(`Deleted ${existingIds.length} objects:`, batchJson.errors || "Success");
+    } else {
+      console.log("No existing catalog items found.");
+    }
+  } catch (error) {
+    console.error("Error clearing catalog:", error);
+  }
+}
 
 // --- Inline CSV: Name,Category,Price (no header commas at line ends) ---
 const csv = `Name,Category,Price
@@ -56,64 +104,85 @@ function parseRows(txt) {
     .map((l) => l.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/));
 }
 
-const rows = parseRows(csv);
+async function createCatalog() {
+  const rows = parseRows(csv);
+  
+  // Use a Set to track unique items by name to prevent duplicates
+  const processedItems = new Set();
+  
+  // Build category objects + items+variations
+  const catMap = {};
+  const objects = [];
 
-// Build category objects + items+variations
-const catMap = {};
-const objects = [];
+  for (const [name, category, price] of rows) {
+    // Skip if this item has already been processed
+    if (processedItems.has(name)) {
+      console.log(`Skipping duplicate item: ${name}`);
+      continue;
+    }
+    
+    processedItems.add(name);
+    
+    if (!catMap[category]) {
+      const catId = `#${randomUUID()}`;
+      catMap[category] = catId;
+      objects.push({
+        id: catId,
+        type: "CATEGORY",
+        category_data: { name: category },
+      });
+    }
 
-for (const [name, category, price] of rows) {
-  if (!catMap[category]) {
-    const catId = `#${randomUUID()}`;
-    catMap[category] = catId;
+    const itemId = `#${randomUUID()}`;
     objects.push({
-      id: catId,
-      type: "CATEGORY",
-      category_data: { name: category },
+      id: itemId,
+      type: "ITEM",
+      item_data: {
+        name,
+        category_id: catMap[category],
+        description: "",
+      },
+    });
+
+    objects.push({
+      id: `#${randomUUID()}`,
+      type: "ITEM_VARIATION",
+      item_variation_data: {
+        item_id: itemId,
+        name: "Regular",
+        price_money: {
+          amount: Math.round(parseFloat(price) * 100),
+          currency: "USD",
+        },
+      },
     });
   }
 
-  const itemId = `#${randomUUID()}`;
-  objects.push({
-    id: itemId,
-    type: "ITEM",
-    item_data: {
-      name,
-      category_id: catMap[category],
-      description: "",
-    },
-  });
-
-  objects.push({
-    id: `#${randomUUID()}`,
-    type: "ITEM_VARIATION",
-    item_variation_data: {
-      item_id: itemId,
-      name: "Regular",
-      price_money: {
-        amount: Math.round(parseFloat(price) * 100),
-        currency: "USD",
+  console.log(`Creating ${objects.length} catalog objects for ${processedItems.size} unique menu items...`);
+  
+  // Send batch-upsert
+  const resp = await fetch(
+    "https://connect.squareupsandbox.com/v2/catalog/batch-upsert",
+    {
+      method: "POST",
+      headers: {
+        "Square-Version": ver,
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
       },
-    },
-  });
+      body: JSON.stringify({
+        idempotency_key: randomUUID(),
+        batches: [{ objects }],
+      }),
+    }
+  );
+
+  const data = await resp.json();
+  console.log("HTTP", resp.status, data.errors || `Upserted ${data.objects?.length} objects`);
 }
 
-// Send batch-upsert
-const resp = await fetch(
-  "https://connect.squareupsandbox.com/v2/catalog/batch-upsert",
-  {
-    method: "POST",
-    headers: {
-      "Square-Version": ver,
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      idempotency_key: randomUUID(),
-      batches: [{ objects }],
-    }),
-  }
-);
-
-const data = await resp.json();
-console.log("HTTP", resp.status, data.errors || `Upserted ${data.objects?.length} objects`);
+// Main execution
+(async function main() {
+  await clearCatalog();
+  await createCatalog();
+})();
