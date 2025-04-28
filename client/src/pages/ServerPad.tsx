@@ -39,9 +39,8 @@ export default function ServerPad() {
                   <Button
                     key={floor}
                     variant={selectedFloor === floor ? "default" : "outline"}
-                    className={selectedFloor === floor ? "bg-primary text-white" : ""}
+                    className={`flex-1 ${selectedFloor === floor ? "bg-primary text-white" : ""}`}
                     onClick={() => handleFloorSelect(floor)}
-                    className="flex-1"
                   >
                     Floor {floor}
                   </Button>
