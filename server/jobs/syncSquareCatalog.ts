@@ -1,7 +1,7 @@
 
 import { log } from "../vite";
 import { storage } from "../storage";
-import { catalogApi } from "../routes";
+import { sq } from "../routes";
 import { eq } from "drizzle-orm";
 import { menu_items } from "../../shared/schema";
 import { db } from "../db";
@@ -11,7 +11,7 @@ async function syncCatalog() {
     log("Starting Square catalog sync...");
     
     // Get catalog from Square
-    const response = await catalogApi.listCatalog(undefined, "ITEM");
+    const response = await sq.catalog.listCatalog(undefined, "ITEM");
     
     if (!response.result.objects) {
       log("No catalog items found in Square");
