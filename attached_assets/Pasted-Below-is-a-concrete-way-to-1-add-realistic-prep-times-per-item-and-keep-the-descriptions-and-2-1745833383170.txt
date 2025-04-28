@@ -1,0 +1,134 @@
+Below is a concrete way to (1) add realistic prep-times *per item* and keep the descriptions, and (2) load that into your existing `menu_items` table so the kitchen timers have useful data.
+
+---
+
+## 1 · Updated CSV format
+
+Add a **`PrepSeconds`** column so every row carries its own cook time. Example:
+
+```
+Name,Description,Category,PrepSeconds,Price
+Boudin Balls,"Crispy Louisiana boudin balls with Creole mustard aioli & sticky Crystal glaze",Shareables,480,12.50
+504 Wings,"Crispy sauced wings—Buffalo, BBQ, or Garlic-Parmesan—with ranch or blue cheese",Shareables,600,14.00
+Cajun Crawfish Pies,"Mini pies stuffed with crawfish étouffée & Creole sauce",Shareables,420,13.00
+...
+Steak Frites,"NY strip, herb butter, fries, béarnaise aioli",Entrees,900,38.00
+Filet Mignon Frites,"Filet upgrade to steak frites",Entrees,960,46.00
+Shrimp Monique,"Bronzed Gulf shrimp, Cajun Alfredo pasta, vegetables, toast",Entrees,720,24.00
+...
+```
+
+### Suggested baseline times
+
+| Category | PrepSeconds |
+|----------|-------------|
+| Shareables / Kids / Desserts | **480 s** (8 min) |
+| Burgers / Handhelds / Pizzas & Flatbreads | **600 s** (10 min) |
+| Entrees | **900 s** (15 min) |
+| Soups / Salads / Sides | **300 s** (5 min) |
+
+Feel free to tweak any specific item that’s faster/slower.
+
+---
+
+## 2 · Replit-Agent prompt (copy/paste once)
+
+```
+🛠️  IMPORT CSV WITH PREP TIMES
+=============================
+
+GOAL
+----
+• Replace scripts/menu_creole_tavern.csv with the new file that
+  includes PrepSeconds.
+• Extend menu_items table if needed.
+• Seed the DB so every row has cook_seconds = PrepSeconds from CSV
+  (overwriting any existing value).
+
+STEPS
+=====
+
+1. 📦  Upload new CSV to scripts/menu_creole_tavern.csv
+    (has columns: Name,Description,Category,PrepSeconds,Price)
+
+2. 🗄️  Ensure shared/schema.ts includes cook_seconds integer column.
+    It already exists; no migration needed.
+
+3. 📝  Create scripts/seedMenuFromCSV.ts
+   ```ts
+   import fs from "fs";
+   import { parse } from "csv-parse/sync";
+   import crypto from "crypto";
+   import { db } from "../server/db";
+   import { menu_items } from "../shared/schema";
+   import { sql } from "drizzle-orm";
+
+   const rows = parse(
+     fs.readFileSync("scripts/menu_creole_tavern.csv"),
+     { columns:true, skip_empty_lines:true }
+   );
+
+   const namesLC = rows.map((r:any)=>r.Name.toLowerCase());
+
+   await db.transaction(async tx=>{
+     for(const r of rows){
+       const nameLC = r.Name.toLowerCase();
+       const existing = await tx.select().from(menu_items)
+                     .where(sql`LOWER(${menu_items.name}) = ${nameLC}`);
+       const row = {
+         name: r.Name,
+         description: r.Description || null,
+         category: r.Category,
+         price_cents: Math.round(parseFloat(r.Price)*100),
+         station: r.Category==="Drinks" ? "Bar":"Kitchen",
+         cook_seconds: parseInt(r.PrepSeconds,10) || 300,
+         active: true,
+       };
+       if(existing.length){
+         await tx.update(menu_items).set(row)
+                 .where(sql`LOWER(${menu_items.name}) = ${nameLC}`);
+       } else {
+         await tx.insert(menu_items).values({
+           ...row,
+           square_id: crypto.randomUUID()
+         });
+       }
+     }
+     await tx.delete(menu_items)
+             .where(sql`LOWER(${menu_items.name}) NOT IN (${namesLC.map(n=>`'${n}'`).join(",")})`);
+   });
+   console.log("Seeded", rows.length, "rows with prep times");
+   process.exit(0);
+   ```
+
+4. ➕  package.json
+   `"seed:menu": "tsx scripts/seedMenuFromCSV.ts"`
+
+5. 🚀  Run:
+     ```bash
+     psql -c "TRUNCATE TABLE menu_items;"
+     npm run seed:menu
+     psql -c "SELECT name, cook_seconds FROM menu_items ORDER BY category, name LIMIT 10;"
+     ```
+
+6. 🔄  Restart `npm run dev`
+    • ServerPad now shows the same categories  
+    • No dummy tabs remain  
+    • cook_seconds column populated with item-specific values
+
+Print **“✅ prep times seeded (39 items)”** when done.
+```
+
+---
+
+## 3 · What to verify
+
+* `SELECT COUNT(*)` = **39**  
+* `SELECT MIN(cook_seconds), MAX(cook_seconds)` returns a spread (e.g., 300 … 960)  
+* UI shows categories: Shareables, Burgers, Pizzas & Flatbreads, …  
+* SEND still drops a Square ticket (unchanged).
+
+Once you reply **“✅ prep times seeded”**, we’ll:
+
+1. Broadcast new order to kitchen WS with its cook_seconds timer.  
+2. Verify Square payment webhook flips status.
