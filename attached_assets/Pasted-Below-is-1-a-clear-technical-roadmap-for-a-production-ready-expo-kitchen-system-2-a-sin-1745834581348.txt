@@ -1,0 +1,123 @@
+Below is **(1) a clear technical roadmap** for a production-ready expo / kitchen system, **(2) a single Replit-Agent prompt** that will move your repo in that direction tonight, and **(3) a downloadable CSV template that carries *descriptions, prep-times & variation choices* so you can seed everything without touching Square until the end.  
+
+---
+
+## 1 How a solid expo/kitchen system should work
+
+| Layer | Purpose | Key points |
+|-------|---------|-----------|
+| **Postgres** | Single source of truth for menu & tickets | tables: `menu_items`, `orders`, `order_items`, `order_modifiers` |
+| **WebSocket hub** (`ws://.../kitchen`) | Push tickets & status in real-time | channels: `kitchen`, `expo`, `servers` |
+| **Ticket lifecycle** | `NEW → COOKING → PLATING → READY → PICKED_UP` | expo moves cards rightward; timers live-update |
+| **Timer logic** | `cook_seconds` (longest item) + `PREP_BUFFER` (120 s) + `EXPO_BUFFER` (180 s) | each item has its own `cook_seconds` from CSV |
+| **Expo UI** | Horizontal rail of cards; color rules: <80 % = green, 80–100 % = yellow, >100 % = red | click card = advance state |
+| **ServerPad** | Floor ➜ Bay ➜ Menu ➜ cart | search box + category tabs; variations pop-over (wing sauce, pizza topping) |
+| **Square** | *Last step only:* POST /v2/orders (custom line items) then payment webhook | keep catalog sync for a later sprint |
+
+> **Why finish the demo before Square?**  
+> *You control your DB and UI completely.* Tickets, timers, modifiers, server & expo screens all work offline. Once reliable, adding the Square POST is trivial (it already succeeds with name + price).
+
+---
+
+### Variation (“Modifier”) design
+
+*Add a `menu_modifiers` table* with columns: `menu_item_id`, `group_name`, `name`, `price_delta_cents`.  
+Examples:  
+| menu_item | group | modifier | Δ ¢ |
+|-----------|-------|----------|----|
+| 504 Wings | Sauce | Buffalo | 0 |
+| 504 Wings | Sauce | BBQ | 0 |
+| Steak Frites | Temp | Rare | 0 |
+
+On the ServerPad menu grid, clicking an item with modifiers opens a modal checklist; selected modifiers append to cart line item and are POSTed to `/api/orders` as an array.
+
+---
+
+## 2 One-shot Replit-Agent prompt
+
+Copy **everything** between the lines into Replit AI-agent chat.  
+It will:
+
+* import `menu_fixed.csv` (with PrepSeconds & Description already inside),
+* create `menu_modifiers` + example modifiers,
+* seed database,
+* add search + modifier modal to ServerPad,
+* build real-time Kitchen/Expo pages with timers & color rules,
+* leave Square integration unchanged for now.
+
+```
+🛠️  “FULL EXPO DEMO (NO SQUARE)” ROLL-UP
+=======================================
+
+GOAL (MVP)
+----------
+• DB holds 39 items with description + prep_seconds.
+• Menu search + variation modal.
+• Ticket rail (NEW→COOKING→PLATING→READY) with live timers.
+• WebSocket hub pushes updates to /kitchen & /expo pages.
+• Square POST stays off until later.
+
+STEPS
+=====
+
+1. 📄  CSV  → DB
+   • Read /mnt/data/menu_fixed.csv  (columns Name,Description,Category,Variation Name,Price,PrepSeconds)
+   • Upsert into menu_items; set cook_seconds = PrepSeconds.
+   • Create table menu_modifiers(id PK, menu_item_id FK, group_name, name, price_delta_cents).
+   • Populate basic modifiers:
+       - “504 Wings” → group=Sauce: Buffalo|BBQ|Garlic-Parmesan
+       - “504 12” Pizza” → group=Topping: Cheese|Pepperoni|Sausage (+200)
+
+2. 🔍  ServerPad improvements
+   • Add search input; filters as you type.
+   • If item has modifiers → show modal with checkbox list; save choice in cart.
+
+3. 🚚  /api/orders  (local only)
+   • existing route: on POST, insert orders+items+modifiers, broadcast “new-ticket” via ws.
+   • timer_end = now + (cook_seconds_of_longest_item + 120 + 180) sec; store in orders table.
+
+4. 🌐  WebSocket hub
+   • npm i ws
+   • server/wsHub.ts: `const wss=new WebSocketServer({noServer:true});`
+   • attach to `/ws/:room` (kitchen, expo, servers).
+
+5. 🍳  Kitchen page
+   • grid of tickets ordered by timer_end.
+   • card shows bay, items summary, live countdown.
+   • background color:   <80% green , 80-100% yellow , >100% red.
+   • click card = advance state (COOKING→PLATING→READY).
+
+6. 📦  Expo page
+   • identical rail but only tickets state ≥ PLATING.
+   • click READY = emits “picked-up” → removes ticket.
+
+7. ✅  dev test
+   • npm run dev
+   • open three tabs: `/`, `/kitchen`, `/expo`.
+   • Place order → appears left in kitchen, timer counts.
+   • Click through states → disappears on pick-up.
+
+Print **“✅ expo demo live”** when:
+   1. menu search works with variants,
+   2. tickets broadcast to kitchen/expo,
+   3. timers color-flip.
+
+```
+
+---
+
+## 3 Downloadable CSV with all columns
+
+[Download menu_fixed.csv](sandbox:/mnt/data/menu_fixed.csv)  
+
+*(It includes Name, Description, Category, Variation Name = Regular, blank SKU, Price, Enabled = Y, Currency = USD, PrepSeconds.)*  
+
+---
+
+### What to do next
+
+1. Paste the agent prompt → let it build.  
+2. Run the three-tab test; confirm timers/colors.  
+3. After the demo works, bolt Square back on by re-enabling the `/api/orders` fetch to Square and handling the payment webhook.
+
+You’ll have a usable hourglass-style expo board, real per-item prep times, modifiers, and servers can place orders today — Square can wait until it’s merely an integration detail.
